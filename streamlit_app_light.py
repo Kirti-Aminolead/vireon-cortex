@@ -79,7 +79,6 @@ st.markdown("""
         position: relative;
         overflow: hidden;
         height: 100%;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .summary-card::before {
         content: '';
@@ -91,11 +90,11 @@ st.markdown("""
     .summary-card.yellow::before { background: #d97706; }
     .summary-card.red::before { background: #dc2626; }
     .summary-card.blue::before { background: #2563eb; }
-    .summary-card.purple::before { background: #7c3aed; }
-    .summary-card.orange::before { background: #ea580c; }
+    .summary-card.purple::before { background: #9d4edd; }
+    .summary-card.orange::before { background: #f77f00; }
     .summary-label {
         font-size: 10px;
-        color: #718096;
+        color: #4a5568;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 6px;
@@ -106,8 +105,8 @@ st.markdown("""
         font-weight: 700;
         color: #1a1a2e;
     }
-    .summary-unit { font-size: 12px; color: #718096; }
-    .summary-subtext { font-size: 10px; color: #a0aec0; margin-top: 4px; }
+    .summary-unit { font-size: 12px; color: #4a5568; }
+    .summary-subtext { font-size: 10px; color: #718096; margin-top: 4px; }
     
     /* Section Headers */
     .section-header {
@@ -121,7 +120,7 @@ st.markdown("""
     .section-icon {
         width: 36px;
         height: 36px;
-        background: #f1f3f4;
+        background: #ffffff;
         border: 1px solid #e2e8f0;
         border-radius: 8px;
         display: flex;
@@ -147,7 +146,6 @@ st.markdown("""
         border-radius: 12px;
         padding: 20px;
         height: 100%;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .kpi-title {
         font-size: 13px;
@@ -164,9 +162,9 @@ st.markdown("""
         border-radius: 50%;
         margin-left: auto;
     }
-    .status-good { background: #059669; box-shadow: 0 0 8px rgba(5, 150, 105, 0.5); }
-    .status-warning { background: #d97706; box-shadow: 0 0 8px rgba(217, 119, 6, 0.5); }
-    .status-critical { background: #dc2626; box-shadow: 0 0 8px rgba(220, 38, 38, 0.5); }
+    .status-good { background: #0d9488; box-shadow: 0 0 8px #0d9488; }
+    .status-warning { background: #d97706; box-shadow: 0 0 8px #d97706; }
+    .status-critical { background: #dc2626; box-shadow: 0 0 8px #dc2626; }
     .kpi-metric {
         display: flex;
         justify-content: space-between;
@@ -177,7 +175,7 @@ st.markdown("""
     .kpi-value { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color: #1a1a2e; }
     .kpi-bar {
         height: 6px;
-        background: #e2e8f0;
+        background: #f1f3f4;
         border-radius: 3px;
         margin-top: 12px;
         overflow: hidden;
@@ -208,24 +206,23 @@ st.markdown("""
         text-align: center;
         border-left: 3px solid #e2e8f0;
     }
-    .risk-item.normal { border-left-color: #059669; background: #ecfdf5; }
-    .risk-item.warning { border-left-color: #d97706; background: #fffbeb; }
-    .risk-item.high { border-left-color: #ea580c; background: #fff7ed; }
-    .risk-item.critical { border-left-color: #dc2626; background: #fef2f2; }
-    .risk-level { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #4a5568; }
-    .risk-count { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: #1a1a2e; }
+    .risk-item.normal { border-left-color: #0d9488; }
+    .risk-item.warning { border-left-color: #d97706; }
+    .risk-item.high { border-left-color: #f77f00; }
+    .risk-item.critical { border-left-color: #dc2626; }
+    .risk-level { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .risk-count { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; }
     .risk-pct { font-size: 10px; color: #718096; }
     
     /* Recommendations */
     .rec-card {
-        background: #ffffff;
+        background: #f1f3f4;
         border: 1px solid #e2e8f0;
         border-radius: 10px;
         padding: 16px;
         display: flex;
         gap: 12px;
         height: 100%;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .rec-priority {
         width: 4px;
@@ -234,7 +231,7 @@ st.markdown("""
     }
     .rec-priority.high { background: #dc2626; }
     .rec-priority.medium { background: #d97706; }
-    .rec-priority.low { background: #059669; }
+    .rec-priority.low { background: #0d9488; }
     .rec-title { font-weight: 600; font-size: 13px; color: #1a1a2e; margin-bottom: 4px; }
     .rec-category { font-size: 10px; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
     .rec-insight { font-size: 11px; color: #4a5568; margin-bottom: 8px; }
@@ -251,7 +248,7 @@ st.markdown("""
     
     /* Savings Banner */
     .savings-banner {
-        background: linear-gradient(135deg, rgba(13, 148, 136, 0.1) 0%, rgba(37, 99, 235, 0.1) 100%);
+        background: linear-gradient(135deg, rgba(6, 214, 160, 0.1) 0%, rgba(17, 138, 178, 0.1) 100%);
         border: 2px solid #0d9488;
         border-radius: 12px;
         padding: 24px;
@@ -276,19 +273,9 @@ st.markdown("""
         font-size: 12px;
         font-weight: 600;
     }
-    .tod-offpeak { background: rgba(5, 150, 105, 0.15); color: #059669; border: 1px solid #059669; }
-    .tod-normal { background: rgba(217, 119, 6, 0.15); color: #d97706; border: 1px solid #d97706; }
-    .tod-peak { background: rgba(220, 38, 38, 0.15); color: #dc2626; border: 1px solid #dc2626; }
-    
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {
-        background: #ffffff;
-        border-right: 1px solid #e2e8f0;
-    }
-    
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: #1a1a2e;
-    }
+    .tod-offpeak { background: rgba(6, 214, 160, 0.2); color: #0d9488; border: 1px solid #0d9488; }
+    .tod-normal { background: rgba(255, 209, 102, 0.2); color: #d97706; border: 1px solid #d97706; }
+    .tod-peak { background: rgba(239, 71, 111, 0.2); color: #dc2626; border: 1px solid #dc2626; }
     
     /* Hide Streamlit elements */
     #MainMenu {visibility: hidden;}
@@ -297,47 +284,6 @@ st.markdown("""
     
     div[data-testid="stMetricValue"] {
         font-family: 'JetBrains Mono', monospace;
-        color: #1a1a2e;
-    }
-    
-    /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {
-        background: #f1f3f4;
-        border-radius: 8px;
-        padding: 4px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        color: #4a5568;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: #ffffff;
-        color: #1a1a2e;
-    }
-    
-    /* Expander styling */
-    .streamlit-expanderHeader {
-        background: #f1f3f4;
-        border-radius: 8px;
-    }
-    
-    /* Input styling */
-    .stTextInput input, .stSelectbox select {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        color: #1a1a2e;
-    }
-    
-    /* Button styling */
-    .stButton button {
-        background: #0d9488;
-        color: white;
-        border: none;
-    }
-    
-    .stButton button:hover {
-        background: #0f766e;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -499,13 +445,13 @@ def get_tod_period():
 def get_color(value, thresholds, reverse=False):
     """Get color based on thresholds"""
     if reverse:
-        if value <= thresholds[0]: return "#06d6a0"
-        elif value <= thresholds[1]: return "#ffd166"
-        else: return "#ef476f"
+        if value <= thresholds[0]: return "#0d9488"
+        elif value <= thresholds[1]: return "#d97706"
+        else: return "#dc2626"
     else:
-        if value >= thresholds[0]: return "#06d6a0"
-        elif value >= thresholds[1]: return "#ffd166"
-        else: return "#ef476f"
+        if value >= thresholds[0]: return "#0d9488"
+        elif value >= thresholds[1]: return "#d97706"
+        else: return "#dc2626"
 
 
 def calculate_kpis(df):
@@ -1051,12 +997,14 @@ def main():
         st.markdown("### 🏭 Shed Filter")
         shed_filter = st.radio(
             "Select View",
-            options=["All Sheds", "Shed 1 (Main Feed)", "Shed 2 (Sub-Feed)"],
+            options=["All Sheds (Overview)", "Shed 1 (Main Feed)", "Shed 2 (Sub-Feed)"],
             index=0,
-            help="View all data or filter by shed"
+            help="Shed 1 is the main meter. Shed 2 is a sub-meter (already included in Shed 1's total)."
         )
         if shed_filter == "Shed 2 (Sub-Feed)":
-            st.info("⚡ Shed 2 is a sub-feed from Shed 1.")
+            st.info("⚡ Shed 2 is a sub-feed measured separately. Its consumption is INCLUDED in Shed 1's total.")
+        elif shed_filter == "All Sheds (Overview)":
+            st.info("📊 Overview shows both sheds. KPIs use Shed 1 (total facility consumption).")
         
         st.markdown("---")
         st.markdown("### 📅 Time Period")
@@ -1178,7 +1126,7 @@ def main():
     elif shed_filter == "Shed 2 (Sub-Feed)":
         shed_label = "Shed 2 (Sub-Feed)"
     else:
-        shed_label = "All Sheds"
+        shed_label = "Facility Overview"
     
     # Header
     col1, col2 = st.columns([3, 1])
@@ -1191,7 +1139,7 @@ def main():
         st.markdown(f"""
             <div style="text-align: right;">
                 <span class="tod-badge {tod_class}">{tod_period}</span>
-                <p style="font-size: 12px; color: #8899a6; margin-top: 8px;">
+                <p style="font-size: 12px; color: #4a5568; margin-top: 8px;">
                     {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 </p>
             </div>
@@ -1352,6 +1300,11 @@ def main():
     df_original = df.copy()
     
     # Apply shed filter
+    # NOTE: Shed 2 is a SUB-METER of Shed 1. Shed 1's readings INCLUDE Shed 2's consumption.
+    # - "Shed 1 (Main Feed)" = Total facility consumption (includes Shed 2)
+    # - "Shed 2 (Sub-Feed)" = Just the sub-feed portion (already counted in Shed 1)
+    # - "All Sheds (Overview)" = Shows both separately for comparison, but KPIs use Shed 1 only
+    
     if 'Device_ID' in df.columns or 'Location' in df.columns:
         location_col = 'Location' if 'Location' in df.columns else 'Device_ID'
         
@@ -1359,6 +1312,10 @@ def main():
             df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         elif shed_filter == "Shed 2 (Sub-Feed)":
             df = df[df[location_col].str.contains('02|Shed_02|Shed 2', case=False, na=False)]
+        elif shed_filter == "All Sheds (Overview)":
+            # For "All Sheds", use Shed 1 data for KPIs (since it includes Shed 2)
+            # But we keep df_original for the overview comparison
+            df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         
         if df.empty:
             st.warning(f"No data found for {shed_filter}. Try a different filter.")
@@ -1432,15 +1389,24 @@ def main():
             st.sidebar.error("No data for selected range.")
     
     # If All Sheds, show quick comparison first
-    if shed_filter == "All Sheds":
+    if shed_filter == "All Sheds (Overview)":
         # Current date/time display
         current_datetime = datetime.now()
         st.markdown(f"""
             <div class="section-header">
                 <span class="section-icon">🏭</span>
-                <span class="section-title">Shed Overview</span>
+                <span class="section-title">Meter Overview</span>
                 <span class="section-badge">Live Status</span>
                 <span class="section-badge" style="margin-left: auto;">📅 {current_datetime.strftime('%A, %b %d, %Y')} | 🕐 {current_datetime.strftime('%H:%M:%S')}</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Explanation banner
+        st.markdown("""
+            <div style="background: rgba(17, 138, 178, 0.1); border: 1px solid #2563eb; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                <strong>📊 Meter Hierarchy:</strong> Shed 1 is the <strong>main meter</strong> measuring total facility consumption. 
+                Shed 2 is a <strong>sub-meter</strong> on a specific circuit - its readings are <em>already included</em> in Shed 1's total.
+                <br><small style="color: #4a5568;">KPIs below use Shed 1 data to avoid double-counting.</small>
             </div>
         """, unsafe_allow_html=True)
         
@@ -1453,11 +1419,11 @@ def main():
             for idx, (_, row) in enumerate(latest.iterrows()):
                 with shed_cols[idx]:
                     is_main = '01' in str(row.get('Device_ID', '')) or '01' in str(row.get('Location', ''))
-                    shed_type = "Main Feed" if is_main else "Sub-Feed"
-                    border_color = "#06d6a0" if is_main else "#118ab2"
+                    shed_type = "Main Meter (Total)" if is_main else "Sub-Meter (Subset)"
+                    border_color = "#0d9488" if is_main else "#2563eb"
                     
                     fire_risk = str(row.get('Fire_Risk_Level', 'NORMAL')).upper()
-                    fire_color = "#06d6a0" if fire_risk == "NORMAL" else "#ffd166" if fire_risk == "WARNING" else "#f77f00" if fire_risk == "HIGH" else "#ef476f"
+                    fire_color = "#0d9488" if fire_risk == "NORMAL" else "#d97706" if fire_risk == "WARNING" else "#f77f00" if fire_risk == "HIGH" else "#dc2626"
                     
                     # Get full timestamp for last reading
                     last_ts = row.get('Timestamp')
@@ -1506,7 +1472,7 @@ def main():
                             </div>
                             <div class="kpi-insight" style="font-size: 10px;">
                                 Last Reading: {last_reading_str}<br>
-                                <span style="color: {'#06d6a0' if mins_ago < 10 else '#ffd166' if mins_ago < 60 else '#ef476f'};">{status_text}</span>
+                                <span style="color: {'#0d9488' if mins_ago < 10 else '#d97706' if mins_ago < 60 else '#dc2626'};">{status_text}</span>
                             </div>
                         </div>
                     """, unsafe_allow_html=True)
@@ -1584,7 +1550,7 @@ def main():
         """, unsafe_allow_html=True)
     
     with cols[4]:
-        pf_color = "#06d6a0" if kpis['avg_pf'] > 0.92 else "#ffd166" if kpis['avg_pf'] > 0.85 else "#ef476f"
+        pf_color = "#0d9488" if kpis['avg_pf'] > 0.92 else "#d97706" if kpis['avg_pf'] > 0.85 else "#dc2626"
         pf_warning = "⚠️ Below 0.92" if kpis['avg_pf'] < 0.92 else "✓ Good"
         st.markdown(f"""
             <div class="summary-card red">
@@ -1617,7 +1583,7 @@ def main():
     # Power Quality (simplified from Phase Balance Monitor)
     with cols[0]:
         v_status = "status-good" if kpis['v_unbalance_avg'] < 2 else "status-warning" if kpis['v_unbalance_avg'] < 5 else "status-critical"
-        v_color = "#06d6a0" if kpis['v_unbalance_avg'] < 2 else "#ffd166" if kpis['v_unbalance_avg'] < 5 else "#ef476f"
+        v_color = "#0d9488" if kpis['v_unbalance_avg'] < 2 else "#d97706" if kpis['v_unbalance_avg'] < 5 else "#dc2626"
         st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-title">
@@ -1648,7 +1614,7 @@ def main():
     # Motor Health (simplified from Predictive Maintenance)
     with cols[1]:
         i_status = "status-good" if kpis['i_unbalance_avg'] < 10 else "status-warning" if kpis['i_unbalance_avg'] < 30 else "status-critical"
-        i_color = "#06d6a0" if kpis['i_unbalance_avg'] < 10 else "#ffd166" if kpis['i_unbalance_avg'] < 30 else "#ef476f"
+        i_color = "#0d9488" if kpis['i_unbalance_avg'] < 10 else "#d97706" if kpis['i_unbalance_avg'] < 30 else "#dc2626"
         st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-title">
@@ -1679,7 +1645,7 @@ def main():
     # Capacity Usage (simplified from Utilization Tracker)
     with cols[2]:
         load_status = "status-good" if kpis['load_avg'] > 50 else "status-warning" if kpis['load_avg'] > 20 else "status-critical"
-        load_color = "#06d6a0" if kpis['load_avg'] > 50 else "#ffd166" if kpis['load_avg'] > 20 else "#ef476f"
+        load_color = "#0d9488" if kpis['load_avg'] > 50 else "#d97706" if kpis['load_avg'] > 20 else "#dc2626"
         st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-title">
@@ -1696,7 +1662,7 @@ def main():
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">Idle Time</span>
-                    <span class="kpi-value" style="color: #ffd166">{kpis['idle_time_pct']:.1f}%</span>
+                    <span class="kpi-value" style="color: #d97706">{kpis['idle_time_pct']:.1f}%</span>
                 </div>
                 <div class="kpi-bar">
                     <div class="kpi-bar-fill" style="width: {kpis['load_avg']}%; background: {load_color};"></div>
@@ -1711,7 +1677,7 @@ def main():
     with cols[3]:
         freq_ok = 49.5 <= kpis['freq_min'] and kpis['freq_max'] <= 50.5
         grid_status = "status-good" if freq_ok else "status-warning"
-        grid_color = "#06d6a0" if freq_ok else "#ffd166"
+        grid_color = "#0d9488" if freq_ok else "#d97706"
         st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-title">
@@ -1768,23 +1734,23 @@ def main():
                         </div>
                         <div class="kpi-metric">
                             <span class="kpi-label">Peak Risk</span>
-                            <span class="kpi-value" style="color: #ef476f">{kpis['neutral_max']:.2f} A</span>
+                            <span class="kpi-value" style="color: #dc2626">{kpis['neutral_max']:.2f} A</span>
                         </div>
                         <div class="kpi-metric">
                             <span class="kpi-label">Elevated Events</span>
-                            <span class="kpi-value" style="color: #ffd166">{kpis['neutral_risk']} ({kpis['neutral_risk']/max(fire_total,1)*100:.1f}%)</span>
+                            <span class="kpi-value" style="color: #d97706">{kpis['neutral_risk']} ({kpis['neutral_risk']/max(fire_total,1)*100:.1f}%)</span>
                         </div>
                     </div>
                     <div style="flex: 1; min-width: 200px;">
                         <div class="risk-grid">
                             <div class="risk-item normal">
-                                <div class="risk-level" style="color: #06d6a0">Safe</div>
-                                <div class="risk-count" style="color: #06d6a0">{kpis['fire_normal']}</div>
+                                <div class="risk-level" style="color: #0d9488">Safe</div>
+                                <div class="risk-count" style="color: #0d9488">{kpis['fire_normal']}</div>
                                 <div class="risk-pct">{kpis['fire_normal']/max(fire_total,1)*100:.1f}%</div>
                             </div>
                             <div class="risk-item warning">
-                                <div class="risk-level" style="color: #ffd166">Watch</div>
-                                <div class="risk-count" style="color: #ffd166">{kpis['fire_warning']}</div>
+                                <div class="risk-level" style="color: #d97706">Watch</div>
+                                <div class="risk-count" style="color: #d97706">{kpis['fire_warning']}</div>
                                 <div class="risk-pct">{kpis['fire_warning']/max(fire_total,1)*100:.1f}%</div>
                             </div>
                             <div class="risk-item high">
@@ -1793,8 +1759,8 @@ def main():
                                 <div class="risk-pct">{kpis['fire_high']/max(fire_total,1)*100:.1f}%</div>
                             </div>
                             <div class="risk-item critical">
-                                <div class="risk-level" style="color: #ef476f">Critical</div>
-                                <div class="risk-count" style="color: #ef476f">{kpis['fire_critical']}</div>
+                                <div class="risk-level" style="color: #dc2626">Critical</div>
+                                <div class="risk-count" style="color: #dc2626">{kpis['fire_critical']}</div>
                                 <div class="risk-pct">{kpis['fire_critical']/max(fire_total,1)*100:.1f}%</div>
                             </div>
                         </div>
@@ -1809,7 +1775,7 @@ def main():
     # Penalty Alert (simplified from PF Penalty Pre-Alert)
     with cols[1]:
         pf_status = "status-good" if kpis['pf_below_92'] < 10 else "status-warning" if kpis['pf_below_92'] < 30 else "status-critical"
-        pf_color = "#06d6a0" if kpis['pf_below_92'] < 10 else "#ffd166" if kpis['pf_below_92'] < 30 else "#ef476f"
+        pf_color = "#0d9488" if kpis['pf_below_92'] < 10 else "#d97706" if kpis['pf_below_92'] < 30 else "#dc2626"
         st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-title">
@@ -1822,11 +1788,11 @@ def main():
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">High Penalty Zone</span>
-                    <span class="kpi-value" style="color: #ef476f">{kpis['pf_below_85']:.1f}%</span>
+                    <span class="kpi-value" style="color: #dc2626">{kpis['pf_below_85']:.1f}%</span>
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">Lowest PF</span>
-                    <span class="kpi-value" style="color: #ef476f">{kpis['pf_min']:.2f}</span>
+                    <span class="kpi-value" style="color: #dc2626">{kpis['pf_min']:.2f}</span>
                 </div>
                 <div class="kpi-bar">
                     <div class="kpi-bar-fill" style="width: {kpis['pf_below_92']}%; background: {pf_color};"></div>
@@ -1849,7 +1815,7 @@ def main():
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">Meter Serial</span>
-                    <span class="kpi-value" style="color: #06d6a0">{meter_serial}</span>
+                    <span class="kpi-value" style="color: #0d9488">{meter_serial}</span>
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">Model</span>
@@ -1857,10 +1823,10 @@ def main():
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">Status</span>
-                    <span class="kpi-value" style="color: #06d6a0">Verified ✓</span>
+                    <span class="kpi-value" style="color: #0d9488">Verified ✓</span>
                 </div>
                 <div class="kpi-bar">
-                    <div class="kpi-bar-fill" style="width: 100%; background: #06d6a0;"></div>
+                    <div class="kpi-bar-fill" style="width: 100%; background: #0d9488;"></div>
                 </div>
                 <div class="kpi-insight">
                     ✓ No meter swapping detected.
@@ -2010,9 +1976,9 @@ def main():
                                     orientation='h',
                                     color='Shift',
                                     color_discrete_map={
-                                        '🌙 Off-Peak (11PM-6AM)': '#118ab2',
-                                        '☀️ Normal (6AM-5PM)': '#06d6a0',
-                                        '🔥 Peak (5PM-11PM)': '#ef476f'
+                                        '🌙 Off-Peak (11PM-6AM)': '#2563eb',
+                                        '☀️ Normal (6AM-5PM)': '#0d9488',
+                                        '🔥 Peak (5PM-11PM)': '#dc2626'
                                     },
                                     title=f'Energy by Shift - {selected_date.strftime("%b %d, %Y")}'
                                 )
@@ -2061,8 +2027,8 @@ def main():
         })
         fig = px.pie(fire_data, values='Count', names='Level', title='Fire Risk Distribution',
                     color='Level', color_discrete_map={
-                        'Normal': '#06d6a0', 'Warning': '#ffd166',
-                        'High': '#f77f00', 'Critical': '#ef476f'
+                        'Normal': '#0d9488', 'Warning': '#d97706',
+                        'High': '#f77f00', 'Critical': '#dc2626'
                     })
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#4a5568')
         st.plotly_chart(fig, use_container_width=True)
@@ -2078,8 +2044,8 @@ def main():
             fig = px.bar(x=load_dist.values / len(df) * 100, y=load_dist.index, orientation='h',
                         title='Load Utilization Pattern', color=load_dist.index,
                         color_discrete_map={
-                            '< 10% (Idle)': '#5c6b7a', '10-25%': '#ffd166',
-                            '25-50%': '#06d6a0', '50-75%': '#118ab2', '> 75%': '#ef476f'
+                            '< 10% (Idle)': '#718096', '10-25%': '#d97706',
+                            '25-50%': '#0d9488', '50-75%': '#2563eb', '> 75%': '#dc2626'
                         })
             fig.update_layout(
                 paper_bgcolor='rgba(255,255,255,1)', plot_bgcolor='rgba(248,249,250,1)',
@@ -2099,7 +2065,7 @@ def main():
                 if len(tod_data) > 0:
                     fig = px.pie(values=tod_data.values, names=tod_data.index, title='Time-of-Day Distribution',
                                 color=tod_data.index, color_discrete_map={
-                                    'OFFPEAK': '#06d6a0', 'NORMAL': '#ffd166', 'PEAK': '#ef476f'
+                                    'OFFPEAK': '#0d9488', 'NORMAL': '#d97706', 'PEAK': '#dc2626'
                                 })
                     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#4a5568')
                     st.plotly_chart(fig, use_container_width=True)
@@ -2131,7 +2097,7 @@ def main():
                     <div class="rec-action">→ Inspect neutral connections, check loose terminals</div>
                     <div class="rec-savings">
                         <span class="rec-savings-label">Priority:</span>
-                        <span class="rec-savings-value" style="color: #ef476f;">SAFETY FIRST</span>
+                        <span class="rec-savings-value" style="color: #dc2626;">SAFETY FIRST</span>
                     </div>
                 </div>
             </div>
@@ -2206,13 +2172,13 @@ def main():
                     # Determine status
                     if minutes_ago <= 10:
                         status = "🟢 LIVE"
-                        status_color = "#06d6a0"
+                        status_color = "#0d9488"
                     elif minutes_ago <= 30:
                         status = "🟡 DELAYED"
-                        status_color = "#ffd166"
+                        status_color = "#d97706"
                     else:
                         status = "🔴 OFFLINE"
-                        status_color = "#ef476f"
+                        status_color = "#dc2626"
                     
                     # Calculate gaps
                     df_loc['time_diff'] = df_loc['Timestamp'].diff()
@@ -2246,7 +2212,7 @@ def main():
                     # Determine if main or sub feed
                     is_main = '01' in shed['location']
                     shed_type = "Main Feed" if is_main else "Sub-Feed"
-                    border_color = "#06d6a0" if is_main else "#118ab2"
+                    border_color = "#0d9488" if is_main else "#2563eb"
                     
                     # Format time ago
                     if shed['minutes_ago'] < 60:
@@ -2276,7 +2242,7 @@ def main():
                             </div>
                             <div class="kpi-metric">
                                 <span class="kpi-label">Data Gaps (>7 min)</span>
-                                <span class="kpi-value" style="color: {'#ef476f' if shed['gaps'] > 10 else '#ffd166' if shed['gaps'] > 0 else '#06d6a0'}">{shed['gaps']}</span>
+                                <span class="kpi-value" style="color: {'#dc2626' if shed['gaps'] > 10 else '#d97706' if shed['gaps'] > 0 else '#0d9488'}">{shed['gaps']}</span>
                             </div>
                             <div class="kpi-bar">
                                 <div class="kpi-bar-fill" style="width: {shed['completeness']:.0f}%; background: {border_color};"></div>
@@ -2346,17 +2312,17 @@ def main():
     # ============= FOOTER =============
     st.markdown("---")
     st.markdown(f"""
-        <p style="text-align: center; color: #5c6b7a; font-size: 11px;">
+        <p style="text-align: center; color: #718096; font-size: 11px;">
             Vireon Cortex Energy Analytics Platform | Omega Transmission POC<br>
             WBSEDCL HT Industrial Tariff | Live Data from Google Sheets<br>
-            <span style="color: #06d6a0;">📊 {kpis['total_readings']} readings | 🔄 Auto-refresh: 60s</span>
+            <span style="color: #0d9488;">📊 {kpis['total_readings']} readings | 🔄 Auto-refresh: 60s</span>
         </p>
     """, unsafe_allow_html=True)
     
     # Refresh section
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        st.markdown(f"<p style='text-align: center; color: #5c6b7a; font-size: 10px;'>Last refresh: {datetime.now().strftime('%H:%M:%S')}</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #718096; font-size: 10px;'>Last refresh: {datetime.now().strftime('%H:%M:%S')}</p>", unsafe_allow_html=True)
     with col2:
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.cache_data.clear()
