@@ -268,19 +268,72 @@ def clean_cumulative_meter_data(df):
     """
     Clean cumulative meter data (Energy_kWh).
     
-    Energy_kWh is a cumulative register - only remove clearly invalid readings:
-    - NaN values
-    - Negative values
+    Energy_kWh is a cumulative register like an odometer - it should ALWAYS increase.
+    This function removes invalid readings where:
+    - Meter value decreases (impossible for cumulative register)
+    - Unrealistic consumption rate (> 200 kW average between readings)
     
-    Does NOT remove decreasing values as meter resets can happen.
+    Processes each Location separately since they have different meters.
     """
     if 'Energy_kWh' not in df.columns or 'Location' not in df.columns or 'Timestamp' not in df.columns:
         return df
     
-    # Just remove NaN and negative Energy values
-    df = df.dropna(subset=['Energy_kWh', 'Timestamp'])
-    df = df[df['Energy_kWh'] >= 0]
-    df = df.sort_values('Timestamp').reset_index(drop=True)
+    cleaned_frames = []
+    for location in df['Location'].unique():
+        df_loc = df[df['Location'] == location].copy()
+        df_loc = df_loc.sort_values('Timestamp').reset_index(drop=True)
+        
+        if len(df_loc) < 2:
+            cleaned_frames.append(df_loc)
+            continue
+        
+        # Keep only monotonically increasing readings with reasonable consumption rate
+        valid_mask = [True]  # First reading is always valid
+        last_valid_idx = 0
+        last_valid_energy = df_loc['Energy_kWh'].iloc[0]
+        last_valid_time = df_loc['Timestamp'].iloc[0]
+        
+        for i in range(1, len(df_loc)):
+            current_energy = df_loc['Energy_kWh'].iloc[i]
+            current_time = df_loc['Timestamp'].iloc[i]
+            
+            if pd.isna(current_energy) or pd.isna(current_time):
+                valid_mask.append(False)
+                continue
+            
+            # Check if energy is increasing
+            if current_energy >= last_valid_energy - 0.01:
+                energy_diff = current_energy - last_valid_energy
+                time_diff_hours = (current_time - last_valid_time).total_seconds() / 3600
+                
+                # Calculate average power (kW) during this interval
+                # Max reasonable: 200 kW (contracted demand is 200 kW)
+                if time_diff_hours > 0:
+                    avg_power_kw = energy_diff / time_diff_hours
+                    if avg_power_kw <= 250:  # Allow up to 250 kW (some buffer over contract)
+                        valid_mask.append(True)
+                        last_valid_energy = current_energy
+                        last_valid_time = current_time
+                        last_valid_idx = i
+                    else:
+                        valid_mask.append(False)  # Unrealistic power consumption
+                else:
+                    # Same timestamp - keep if energy is same or slightly higher
+                    if energy_diff < 1:
+                        valid_mask.append(True)
+                        last_valid_energy = current_energy
+                        last_valid_time = current_time
+                    else:
+                        valid_mask.append(False)
+            else:
+                valid_mask.append(False)  # Decreasing = invalid for cumulative meter
+        
+        df_loc_clean = df_loc[valid_mask]
+        cleaned_frames.append(df_loc_clean)
+    
+    if cleaned_frames:
+        df = pd.concat(cleaned_frames, ignore_index=True)
+        df = df.sort_values('Timestamp').reset_index(drop=True)
     
     return df
 
@@ -477,7 +530,6 @@ def calculate_kpis(df):
     else:
         kpis['total_energy'] = 0
     
-    kpis['total_cost'] = safe_get(df, 'Daily_Cost_Rs', 0, 'sum')
     kpis['peak_demand'] = safe_get(df, 'kW_Total', 0, 'max')
     kpis['max_demand_recorded'] = safe_get(df, 'Max_Demand_kW', 0, 'max')
     kpis['avg_pf'] = safe_get(df, 'PF_Avg', 0, 'mean')
@@ -562,6 +614,15 @@ def calculate_kpis(df):
                         kpis['energy_offpeak'] = period_energy
         except Exception:
             pass
+    
+    # Calculate cost based on ToD rates (after ToD energy is calculated)
+    # WBSEDCL HT Industrial: Peak=8.37, Normal=6.87, Off-peak=5.18
+    kpis['total_cost'] = (kpis.get('energy_peak', 0) * 8.37 + 
+                          kpis.get('energy_normal', 0) * 6.87 + 
+                          kpis.get('energy_offpeak', 0) * 5.18)
+    # Fallback if ToD not available
+    if kpis['total_cost'] == 0 and kpis['total_energy'] > 0:
+        kpis['total_cost'] = kpis['total_energy'] * 6.87
     
     # Contracted demand (from your setup - 200 kW)
     kpis['contracted_demand'] = 200  # kW
@@ -1906,20 +1967,17 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                # Data is already cleaned and sorted at load time by clean_cumulative_meter_data()
                 # Calculate daily consumption: last reading - first reading for each day
-                
-                # Group by date and calculate energy (data already sorted by timestamp)
                 daily_stats = []
                 for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
-                    if len(group) >= 2:
-                        # Data is already sorted by timestamp from loading
-                        first_energy = group['Energy_kWh'].iloc[0]
-                        last_energy = group['Energy_kWh'].iloc[-1]
+                    group_sorted = group.sort_values('Timestamp')
+                    if len(group_sorted) >= 2:
+                        first_energy = group_sorted['Energy_kWh'].iloc[0]
+                        last_energy = group_sorted['Energy_kWh'].iloc[-1]
                         energy = max(0, last_energy - first_energy)
                     else:
                         energy = 0
-                    peak_kw = group['kW_Total'].max()
+                    peak_kw = group_sorted['kW_Total'].max()
                     daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
                 
                 daily = pd.DataFrame(daily_stats)
@@ -1927,17 +1985,13 @@ def main():
                 if len(daily) == 0:
                     st.warning("No daily data available")
                 else:
-                    # Filter out only unrealistic values (keep 0 kWh days - server might be down)
-                    daily = daily[daily['Energy_kWh'] < 2000]  # Max 2000 kWh/day is reasonable
-                    
-                    # Add day of week info for coloring
+                    daily = daily[daily['Energy_kWh'] < 2000]
                     daily['Date'] = pd.to_datetime(daily['Date'])
-                    daily['DayOfWeek'] = daily['Date'].dt.dayofweek  # 0=Mon, 6=Sun
-                    daily['DayName'] = daily['Date'].dt.strftime('%a')  # Mon, Tue, etc.
-                    daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])  # Sat=5, Sun=6
+                    daily['DayOfWeek'] = daily['Date'].dt.dayofweek
+                    daily['DayName'] = daily['Date'].dt.strftime('%a')
+                    daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])
                     daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
                     
-                    # Create bar chart with weekend/weekday colors
                     fig = px.bar(daily, x='Date', y='Energy_kWh', 
                                 color='DayType',
                                 color_discrete_map={
@@ -1952,23 +2006,17 @@ def main():
                         plot_bgcolor='rgba(21,29,40,1)',
                         font_color='#475569', 
                         title_font_color='#1e293b',
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="right",
-                            x=1
-                        )
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
                     fig.update_xaxes(gridcolor='#e2e8f0', tickformat='%b %d\n%a')
                     fig.update_yaxes(gridcolor='#e2e8f0', title='Energy (kWh)')
                     
-                    # Add weekend shading
+                    # Weekend shading - convert to timestamp for arithmetic
                     for _, row in daily[daily['IsWeekend']].iterrows():
-                        dt = pd.Timestamp(row['Date'])
+                        ts = pd.Timestamp(row['Date'])
                         fig.add_vrect(
-                            x0=dt - pd.Timedelta(hours=12),
-                            x1=dt + pd.Timedelta(hours=12),
+                            x0=ts - pd.Timedelta(hours=12),
+                            x1=ts + pd.Timedelta(hours=12),
                             fillcolor="rgba(17, 138, 178, 0.1)",
                             layer="below",
                             line_width=0,
@@ -1976,7 +2024,6 @@ def main():
                     
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # Show weekday vs weekend summary
                     weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
                     weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
                     
@@ -1989,26 +2036,21 @@ def main():
                         diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
                         st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
                 
-                # Cumulative Energy Meter Reading Chart
+                # Cumulative Energy Meter Reading Chart - Simple version
                 st.markdown("---")
                 st.markdown("#### 📈 Cumulative Meter Reading")
-                st.caption("Data cleaned at load: invalid readings (meter decreases, unrealistic jumps) already removed")
                 
-                if len(df) > 0:
-                    # Prepare data with daily consumption calculation
+                if len(df) > 0 and 'Timestamp' in df.columns and 'Energy_kWh' in df.columns:
+                    # Just sort by timestamp and plot - no filtering
                     df_chart = df[['Timestamp', 'Energy_kWh', 'Location']].copy()
                     df_chart = df_chart.sort_values('Timestamp')
-                    df_chart['Date'] = df_chart['Timestamp'].dt.date
-                    df_chart['Week'] = df_chart['Timestamp'].dt.isocalendar().week
-                    df_chart['DayName'] = df_chart['Timestamp'].dt.strftime('%a')
                     
                     fig_cumulative = px.line(
                         df_chart, 
                         x='Timestamp', 
                         y='Energy_kWh',
-                        color='Location' if 'Location' in df_chart.columns and df_chart['Location'].nunique() > 1 else None,
-                        title='Cumulative Energy Meter Reading Over Time',
-                        markers=False
+                        color='Location' if df_chart['Location'].nunique() > 1 else None,
+                        title='Cumulative Energy Meter Reading Over Time'
                     )
                     
                     fig_cumulative.update_layout(
@@ -2018,14 +2060,11 @@ def main():
                         title_font_color='#1e293b',
                         hovermode='x unified'
                     )
-                    fig_cumulative.update_xaxes(gridcolor='#e2e8f0', title='Date', showgrid=True)
-                    fig_cumulative.update_yaxes(gridcolor='#e2e8f0', title='Meter Reading (kWh)', showgrid=True)
+                    fig_cumulative.update_xaxes(gridcolor='#c0c0c0', title='Date', showgrid=True)
+                    fig_cumulative.update_yaxes(gridcolor='#c0c0c0', title='Meter Reading (kWh)', showgrid=True)
                     fig_cumulative.update_traces(line=dict(width=2))
                     
                     st.plotly_chart(fig_cumulative, use_container_width=True)
-                    
-                    # Show meter reading stats
-                    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
                     
                     # Stats per location
                     for loc in df['Location'].unique():
@@ -2034,16 +2073,13 @@ def main():
                             first_reading = df_loc['Energy_kWh'].iloc[0]
                             last_reading = df_loc['Energy_kWh'].iloc[-1]
                             total_consumed = last_reading - first_reading
-                            
-                            with col_m1:
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
                                 st.metric(f"{loc} First", f"{first_reading:,.1f} kWh")
-                            with col_m2:
+                            with col2:
                                 st.metric(f"{loc} Latest", f"{last_reading:,.1f} kWh")
-                            with col_m3:
+                            with col3:
                                 st.metric(f"{loc} Consumed", f"{total_consumed:,.1f} kWh")
-                    
-                    with col_m4:
-                        st.metric("✅ Data", "Cleaned at load")
                 
                 # Shift-wise Distribution Section
                 st.markdown("---")
