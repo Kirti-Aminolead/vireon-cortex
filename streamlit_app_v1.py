@@ -470,6 +470,12 @@ def generate_report_csv(df, kpis, report_type, shed_label):
     """Generate CSV report for download"""
     from io import StringIO
     
+    # Get date range safely
+    try:
+        date_range = f"{df['Timestamp'].min().strftime('%Y-%m-%d')} to {df['Timestamp'].max().strftime('%Y-%m-%d')}" if 'Timestamp' in df.columns else "N/A"
+    except:
+        date_range = "N/A"
+    
     # Summary data
     summary_data = {
         'Metric': [
@@ -483,34 +489,44 @@ def generate_report_csv(df, kpis, report_type, shed_label):
             'Run Hours', 'Frequency Range (Hz)', 'Voltage Range (V)'
         ],
         'Value': [
-            report_type, shed_label, 
-            f"{df['Timestamp'].min().strftime('%Y-%m-%d')} to {df['Timestamp'].max().strftime('%Y-%m-%d')}",
-            kpis['total_readings'],
-            f"{kpis['total_energy']:.2f}", f"{kpis['peak_demand']:.2f}", f"{kpis['max_demand_recorded']:.2f}",
-            f"{kpis['avg_pf']:.3f}", f"{kpis['pf_min']:.3f}", f"{kpis['pf_below_92']:.1f}",
-            f"{kpis['load_avg']:.1f}", f"{kpis['load_max']:.1f}", f"{kpis['idle_time_pct']:.1f}",
-            f"{kpis['v_unbalance_avg']:.2f}", f"{kpis['i_unbalance_avg']:.2f}",
-            f"{kpis['neutral_avg']:.2f}", f"{kpis['neutral_max']:.2f}",
-            kpis['fire_normal'], kpis['fire_warning'], kpis['fire_high'], kpis['fire_critical'],
-            f"{kpis['run_hours']:.1f}", f"{kpis['freq_min']:.1f} - {kpis['freq_max']:.1f}",
-            f"{kpis['vll_min']:.0f} - {kpis['vll_max']:.0f}"
+            report_type, shed_label, date_range,
+            kpis.get('total_readings', 0),
+            f"{kpis.get('total_energy', 0):.2f}", f"{kpis.get('peak_demand', 0):.2f}", f"{kpis.get('max_demand_recorded', 0):.2f}",
+            f"{kpis.get('avg_pf', 0):.3f}", f"{kpis.get('pf_min', 0):.3f}", f"{kpis.get('pf_below_92', 0):.1f}",
+            f"{kpis.get('load_avg', 0):.1f}", f"{kpis.get('load_max', 0):.1f}", f"{kpis.get('idle_time_pct', 0):.1f}",
+            f"{kpis.get('v_unbalance_avg', 0):.2f}", f"{kpis.get('i_unbalance_avg', 0):.2f}",
+            f"{kpis.get('neutral_avg', 0):.2f}", f"{kpis.get('neutral_max', 0):.2f}",
+            kpis.get('fire_normal', 0), kpis.get('fire_warning', 0), kpis.get('fire_high', 0), kpis.get('fire_critical', 0),
+            f"{kpis.get('run_hours', 0):.1f}", f"{kpis.get('freq_min', 50):.1f} - {kpis.get('freq_max', 50):.1f}",
+            f"{kpis.get('vll_min', 0):.0f} - {kpis.get('vll_max', 0):.0f}"
         ]
     }
     
     summary_df = pd.DataFrame(summary_data)
     
-    # Daily aggregation
+    # Daily aggregation - with column checks
+    daily_df = pd.DataFrame()
     if 'Date' in df.columns:
-        daily_df = df.groupby(df['Date'].dt.date).agg({
-            'kW_Total': ['mean', 'max'],
-            'PF_Avg': 'mean',
-            'Load_Pct': 'mean',
-            'Neutral_Current_A': 'max',
-            'Energy_kWh': lambda x: x.max() - x.min() if len(x) > 1 else 0
-        }).reset_index()
-        daily_df.columns = ['Date', 'Avg_kW', 'Peak_kW', 'Avg_PF', 'Avg_Load_Pct', 'Max_Neutral_A', 'Daily_Energy_kWh']
-    else:
-        daily_df = pd.DataFrame()
+        try:
+            # Check which columns exist
+            agg_dict = {}
+            if 'kW_Total' in df.columns:
+                agg_dict['kW_Total'] = ['mean', 'max']
+            if 'PF_Avg' in df.columns:
+                agg_dict['PF_Avg'] = 'mean'
+            if 'Load_Pct' in df.columns:
+                agg_dict['Load_Pct'] = 'mean'
+            if 'Neutral_Current_A' in df.columns:
+                agg_dict['Neutral_Current_A'] = 'max'
+            if 'Energy_kWh' in df.columns:
+                agg_dict['Energy_kWh'] = lambda x: x.max() - x.min() if len(x) > 1 else 0
+            
+            if agg_dict:
+                daily_df = df.groupby(pd.to_datetime(df['Date']).dt.date).agg(agg_dict).reset_index()
+                # Flatten column names
+                daily_df.columns = ['_'.join(col).strip('_') if isinstance(col, tuple) else col for col in daily_df.columns]
+        except Exception:
+            daily_df = pd.DataFrame()
     
     # Combine into CSV
     output = StringIO()
@@ -662,19 +678,23 @@ def main():
     if generate_report:
         report_df = df.copy()
         
-        # Apply report date filter
-        if report_type == "Weekly Report":
-            cutoff = pd.Timestamp.now() - pd.Timedelta(days=7)
-            report_df = report_df[report_df['Timestamp'] >= cutoff]
-        elif report_type == "Monthly Report":
-            cutoff = pd.Timestamp.now() - pd.Timedelta(days=30)
-            report_df = report_df[report_df['Timestamp'] >= cutoff]
-        elif report_type == "Custom Range":
-            if report_start and report_end:
-                report_df = report_df[
-                    (report_df['Timestamp'].dt.date >= report_start) & 
-                    (report_df['Timestamp'].dt.date <= report_end)
-                ]
+        # Apply report date filter (only if Timestamp exists)
+        if 'Timestamp' in report_df.columns:
+            if report_type == "Weekly Report":
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=7)
+                report_df = report_df[report_df['Timestamp'] >= cutoff]
+            elif report_type == "Monthly Report":
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=30)
+                report_df = report_df[report_df['Timestamp'] >= cutoff]
+            elif report_type == "Custom Range":
+                if report_start and report_end:
+                    try:
+                        report_df = report_df[
+                            (report_df['Timestamp'].dt.date >= report_start) & 
+                            (report_df['Timestamp'].dt.date <= report_end)
+                        ]
+                    except Exception:
+                        pass
         
         if not report_df.empty:
             report_kpis = calculate_kpis(report_df)
@@ -1111,21 +1131,27 @@ def main():
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Daily Energy", "🔥 Fire Risk", "📈 Load Profile", "🕐 ToD Analysis"])
     
     with tab1:
-        daily = df.groupby(df['Date'].dt.date).agg({
-            'Energy_kWh': lambda x: x.max() - x.min() if len(x) > 1 else 0,
-            'kW_Total': 'max'
-        }).reset_index()
-        daily.columns = ['Date', 'Energy_kWh', 'Peak_kW']
-        
-        fig = px.bar(daily, x='Date', y='Energy_kWh', title='Daily Energy Consumption',
-                    color_discrete_sequence=['#06d6a0'])
-        fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(21,29,40,1)',
-            font_color='#8899a6', title_font_color='#f0f4f8'
-        )
-        fig.update_xaxes(gridcolor='#253040')
-        fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
+                daily = df.groupby(pd.to_datetime(df['Date']).dt.date).agg({
+                    'Energy_kWh': lambda x: x.max() - x.min() if len(x) > 1 else 0,
+                    'kW_Total': 'max'
+                }).reset_index()
+                daily.columns = ['Date', 'Energy_kWh', 'Peak_kW']
+                
+                fig = px.bar(daily, x='Date', y='Energy_kWh', title='Daily Energy Consumption',
+                            color_discrete_sequence=['#06d6a0'])
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(21,29,40,1)',
+                    font_color='#8899a6', title_font_color='#f0f4f8'
+                )
+                fig.update_xaxes(gridcolor='#253040')
+                fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Energy data not available for chart.")
+        except Exception as e:
+            st.warning(f"Could not generate daily chart: {e}")
     
     with tab2:
         fire_data = pd.DataFrame({
