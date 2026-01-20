@@ -338,12 +338,19 @@ def load_data_from_public_sheet(sheet_id, sheet_name="readings"):
         
         df = pd.read_csv(StringIO(response.text))
         
+        # Handle Timestamp column
         if 'Timestamp' in df.columns:
             df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        
+        # Handle Date column - ensure it exists
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         elif 'Timestamp' in df.columns:
-            df['Date'] = df['Timestamp'].dt.date
+            df['Date'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+        
+        # Ensure Date column exists even if both are missing
+        if 'Date' not in df.columns:
+            df['Date'] = pd.NaT
         
         numeric_cols = ['kW_Total', 'kVA_Total', 'PF_Avg', 'VLN_Avg', 'VLL_Avg', 'Current_Total',
                        'Neutral_Current_A', 'Frequency_Hz', 'Energy_kWh', 'Daily_Cost_Rs',
@@ -738,9 +745,29 @@ def main():
         
         st.markdown("<br>", unsafe_allow_html=True)
     
-    # Get date range
-    date_min = df['Date'].min().strftime('%b %d') if pd.notna(df['Date'].min()) else 'N/A'
-    date_max = df['Date'].max().strftime('%b %d, %Y') if pd.notna(df['Date'].max()) else 'N/A'
+    # Get date range safely
+    date_min = 'N/A'
+    date_max = 'N/A'
+    if 'Date' in df.columns and len(df) > 0:
+        try:
+            date_min_val = df['Date'].min()
+            date_max_val = df['Date'].max()
+            if pd.notna(date_min_val):
+                date_min = pd.to_datetime(date_min_val).strftime('%b %d')
+            if pd.notna(date_max_val):
+                date_max = pd.to_datetime(date_max_val).strftime('%b %d, %Y')
+        except Exception:
+            pass
+    elif 'Timestamp' in df.columns and len(df) > 0:
+        try:
+            date_min_val = df['Timestamp'].min()
+            date_max_val = df['Timestamp'].max()
+            if pd.notna(date_min_val):
+                date_min = date_min_val.strftime('%b %d')
+            if pd.notna(date_max_val):
+                date_max = date_max_val.strftime('%b %d, %Y')
+        except Exception:
+            pass
     
     # ============= CORE METRICS (6 cards) =============
     st.markdown(f"""
