@@ -293,72 +293,19 @@ def clean_cumulative_meter_data(df):
     """
     Clean cumulative meter data (Energy_kWh).
     
-    Energy_kWh is a cumulative register like an odometer - it should ALWAYS increase.
-    This function removes invalid readings where:
-    - Meter value decreases (impossible for cumulative register)
-    - Unrealistic consumption rate (> 200 kW average between readings)
+    Energy_kWh is a cumulative register - only remove clearly invalid readings:
+    - NaN values
+    - Negative values
     
-    Processes each Location separately since they have different meters.
+    Does NOT remove decreasing values as meter resets can happen.
     """
     if 'Energy_kWh' not in df.columns or 'Location' not in df.columns or 'Timestamp' not in df.columns:
         return df
     
-    cleaned_frames = []
-    for location in df['Location'].unique():
-        df_loc = df[df['Location'] == location].copy()
-        df_loc = df_loc.sort_values('Timestamp').reset_index(drop=True)
-        
-        if len(df_loc) < 2:
-            cleaned_frames.append(df_loc)
-            continue
-        
-        # Keep only monotonically increasing readings with reasonable consumption rate
-        valid_mask = [True]  # First reading is always valid
-        last_valid_idx = 0
-        last_valid_energy = df_loc['Energy_kWh'].iloc[0]
-        last_valid_time = df_loc['Timestamp'].iloc[0]
-        
-        for i in range(1, len(df_loc)):
-            current_energy = df_loc['Energy_kWh'].iloc[i]
-            current_time = df_loc['Timestamp'].iloc[i]
-            
-            if pd.isna(current_energy) or pd.isna(current_time):
-                valid_mask.append(False)
-                continue
-            
-            # Check if energy is increasing
-            if current_energy >= last_valid_energy - 0.01:
-                energy_diff = current_energy - last_valid_energy
-                time_diff_hours = (current_time - last_valid_time).total_seconds() / 3600
-                
-                # Calculate average power (kW) during this interval
-                # Max reasonable: 200 kW (contracted demand is 200 kW)
-                if time_diff_hours > 0:
-                    avg_power_kw = energy_diff / time_diff_hours
-                    if avg_power_kw <= 250:  # Allow up to 250 kW (some buffer over contract)
-                        valid_mask.append(True)
-                        last_valid_energy = current_energy
-                        last_valid_time = current_time
-                        last_valid_idx = i
-                    else:
-                        valid_mask.append(False)  # Unrealistic power consumption
-                else:
-                    # Same timestamp - keep if energy is same or slightly higher
-                    if energy_diff < 1:
-                        valid_mask.append(True)
-                        last_valid_energy = current_energy
-                        last_valid_time = current_time
-                    else:
-                        valid_mask.append(False)
-            else:
-                valid_mask.append(False)  # Decreasing = invalid for cumulative meter
-        
-        df_loc_clean = df_loc[valid_mask]
-        cleaned_frames.append(df_loc_clean)
-    
-    if cleaned_frames:
-        df = pd.concat(cleaned_frames, ignore_index=True)
-        df = df.sort_values('Timestamp').reset_index(drop=True)
+    # Just remove NaN and negative Energy values
+    df = df.dropna(subset=['Energy_kWh', 'Timestamp'])
+    df = df[df['Energy_kWh'] >= 0]
+    df = df.sort_values('Timestamp').reset_index(drop=True)
     
     return df
 
