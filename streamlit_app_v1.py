@@ -291,74 +291,16 @@ st.markdown("""
 # ============= HELPER FUNCTIONS =============
 def clean_cumulative_meter_data(df):
     """
-    Clean cumulative meter data (Energy_kWh).
-    
-    Energy_kWh is a cumulative register like an odometer - it should ALWAYS increase.
-    This function removes invalid readings where:
-    - Meter value decreases (impossible for cumulative register)
-    - Unrealistic consumption rate (> 200 kW average between readings)
-    
-    Processes each Location separately since they have different meters.
+    Clean cumulative meter data - minimal cleaning.
+    Only removes rows with NaN in critical columns.
+    Does NOT filter based on energy values.
     """
     if 'Energy_kWh' not in df.columns or 'Location' not in df.columns or 'Timestamp' not in df.columns:
         return df
     
-    cleaned_frames = []
-    for location in df['Location'].unique():
-        df_loc = df[df['Location'] == location].copy()
-        df_loc = df_loc.sort_values('Timestamp').reset_index(drop=True)
-        
-        if len(df_loc) < 2:
-            cleaned_frames.append(df_loc)
-            continue
-        
-        # Keep only monotonically increasing readings with reasonable consumption rate
-        valid_mask = [True]  # First reading is always valid
-        last_valid_idx = 0
-        last_valid_energy = df_loc['Energy_kWh'].iloc[0]
-        last_valid_time = df_loc['Timestamp'].iloc[0]
-        
-        for i in range(1, len(df_loc)):
-            current_energy = df_loc['Energy_kWh'].iloc[i]
-            current_time = df_loc['Timestamp'].iloc[i]
-            
-            if pd.isna(current_energy) or pd.isna(current_time):
-                valid_mask.append(False)
-                continue
-            
-            # Check if energy is increasing
-            if current_energy >= last_valid_energy - 0.01:
-                energy_diff = current_energy - last_valid_energy
-                time_diff_hours = (current_time - last_valid_time).total_seconds() / 3600
-                
-                # Calculate average power (kW) during this interval
-                # Max reasonable: 200 kW (contracted demand is 200 kW)
-                if time_diff_hours > 0:
-                    avg_power_kw = energy_diff / time_diff_hours
-                    if avg_power_kw <= 250:  # Allow up to 250 kW (some buffer over contract)
-                        valid_mask.append(True)
-                        last_valid_energy = current_energy
-                        last_valid_time = current_time
-                        last_valid_idx = i
-                    else:
-                        valid_mask.append(False)  # Unrealistic power consumption
-                else:
-                    # Same timestamp - keep if energy is same or slightly higher
-                    if energy_diff < 1:
-                        valid_mask.append(True)
-                        last_valid_energy = current_energy
-                        last_valid_time = current_time
-                    else:
-                        valid_mask.append(False)
-            else:
-                valid_mask.append(False)  # Decreasing = invalid for cumulative meter
-        
-        df_loc_clean = df_loc[valid_mask]
-        cleaned_frames.append(df_loc_clean)
-    
-    if cleaned_frames:
-        df = pd.concat(cleaned_frames, ignore_index=True)
-        df = df.sort_values('Timestamp').reset_index(drop=True)
+    # Only remove NaN timestamps and sort
+    df = df.dropna(subset=['Timestamp'])
+    df = df.sort_values('Timestamp').reset_index(drop=True)
     
     return df
 
@@ -537,21 +479,22 @@ def calculate_kpis(df):
     n = len(df)
     kpis['total_readings'] = n
     
-    # Energy calculation - handle meter resets properly
-    # Use diff method to sum only positive increments (ignore resets)
-    if 'Energy_kWh' in df.columns and 'Timestamp' in df.columns:
+    # Energy calculation - use last reading minus first reading per location
+    # This handles meter resets correctly (cumulative meter)
+    if 'Energy_kWh' in df.columns and 'Timestamp' in df.columns and 'Location' in df.columns:
         try:
-            df_sorted = df.sort_values('Timestamp').copy()
-            energy_diff = df_sorted['Energy_kWh'].diff()
-            # Only count positive diffs less than 500 kWh (reasonable max per reading)
-            # Negative diffs = meter reset, very large diffs = data error
-            valid_energy = energy_diff.apply(lambda x: x if (pd.notna(x) and 0 < x < 500) else 0)
-            kpis['total_energy'] = valid_energy.sum()
+            total_energy = 0
+            for loc in df['Location'].unique():
+                df_loc = df[df['Location'] == loc].sort_values('Timestamp')
+                if len(df_loc) >= 2:
+                    first_e = df_loc['Energy_kWh'].iloc[0]
+                    last_e = df_loc['Energy_kWh'].iloc[-1]
+                    loc_energy = last_e - first_e
+                    if loc_energy > 0:
+                        total_energy += loc_energy
+            kpis['total_energy'] = total_energy
         except:
-            # Fallback to max-min method
-            energy_max = safe_get(df, 'Energy_kWh', 0, 'max')
-            energy_min = safe_get(df, 'Energy_kWh', 0, 'min')
-            kpis['total_energy'] = max(0, energy_max - energy_min)
+            kpis['total_energy'] = 0
     else:
         kpis['total_energy'] = 0
     
@@ -617,19 +560,17 @@ def calculate_kpis(df):
     if 'ToD_Period' in df.columns and 'Energy_kWh' in df.columns:
         try:
             df_tod = df.copy()
+            # Normalize ToD: OFF-PEAK and OFFPEAK both become OFFPEAK
             df_tod['ToD_Normalized'] = df_tod['ToD_Period'].str.upper().str.replace('-', '').str.strip()
             df_tod = df_tod.sort_values('Timestamp')
             
             for period in ['PEAK', 'NORMAL', 'OFFPEAK']:
-                df_period = df_tod[df_tod['ToD_Normalized'] == period]
+                df_period = df_tod[df_tod['ToD_Normalized'] == period].copy()
                 if len(df_period) >= 2:
-                    # Calculate energy per period (last - first for each day, summed)
-                    period_energy = 0
-                    for date, group in df_period.groupby(df_period['Timestamp'].dt.date):
-                        if len(group) >= 2:
-                            first_e = group['Energy_kWh'].iloc[0]
-                            last_e = group['Energy_kWh'].iloc[-1]
-                            period_energy += max(0, last_e - first_e)
+                    # Use diff method - sum positive increments only
+                    df_period = df_period.sort_values('Timestamp')
+                    energy_diff = df_period['Energy_kWh'].diff()
+                    period_energy = energy_diff.apply(lambda x: x if (pd.notna(x) and 0 < x < 500) else 0).sum()
                     
                     if period == 'PEAK':
                         kpis['energy_peak'] = period_energy
@@ -1457,10 +1398,7 @@ def main():
             df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         elif shed_filter == "Shed 2 (Sub-Feed)":
             df = df[df[location_col].str.contains('02|Shed_02|Shed 2', case=False, na=False)]
-        elif shed_filter == "All Sheds (Overview)":
-            # For "All Sheds", use Shed 1 data for KPIs (since it includes Shed 2)
-            # But we keep df_original for the overview comparison
-            df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
+        # For "All Sheds (Overview)" - keep all data, don't filter
         
         if df.empty:
             st.warning(f"No data found for {shed_filter}. Try a different filter.")
