@@ -996,12 +996,14 @@ def main():
         st.markdown("### 🏭 Shed Filter")
         shed_filter = st.radio(
             "Select View",
-            options=["All Sheds", "Shed 1 (Main Feed)", "Shed 2 (Sub-Feed)"],
+            options=["All Sheds (Overview)", "Shed 1 (Main Feed)", "Shed 2 (Sub-Feed)"],
             index=0,
-            help="View all data or filter by shed"
+            help="Shed 1 is the main meter. Shed 2 is a sub-meter (already included in Shed 1's total)."
         )
         if shed_filter == "Shed 2 (Sub-Feed)":
-            st.info("⚡ Shed 2 is a sub-feed from Shed 1.")
+            st.info("⚡ Shed 2 is a sub-feed measured separately. Its consumption is INCLUDED in Shed 1's total.")
+        elif shed_filter == "All Sheds (Overview)":
+            st.info("📊 Overview shows both sheds. KPIs use Shed 1 (total facility consumption).")
         
         st.markdown("---")
         st.markdown("### 📅 Time Period")
@@ -1123,7 +1125,7 @@ def main():
     elif shed_filter == "Shed 2 (Sub-Feed)":
         shed_label = "Shed 2 (Sub-Feed)"
     else:
-        shed_label = "All Sheds"
+        shed_label = "Facility Overview"
     
     # Header
     col1, col2 = st.columns([3, 1])
@@ -1297,6 +1299,11 @@ def main():
     df_original = df.copy()
     
     # Apply shed filter
+    # NOTE: Shed 2 is a SUB-METER of Shed 1. Shed 1's readings INCLUDE Shed 2's consumption.
+    # - "Shed 1 (Main Feed)" = Total facility consumption (includes Shed 2)
+    # - "Shed 2 (Sub-Feed)" = Just the sub-feed portion (already counted in Shed 1)
+    # - "All Sheds (Overview)" = Shows both separately for comparison, but KPIs use Shed 1 only
+    
     if 'Device_ID' in df.columns or 'Location' in df.columns:
         location_col = 'Location' if 'Location' in df.columns else 'Device_ID'
         
@@ -1304,6 +1311,10 @@ def main():
             df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         elif shed_filter == "Shed 2 (Sub-Feed)":
             df = df[df[location_col].str.contains('02|Shed_02|Shed 2', case=False, na=False)]
+        elif shed_filter == "All Sheds (Overview)":
+            # For "All Sheds", use Shed 1 data for KPIs (since it includes Shed 2)
+            # But we keep df_original for the overview comparison
+            df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         
         if df.empty:
             st.warning(f"No data found for {shed_filter}. Try a different filter.")
@@ -1377,15 +1388,24 @@ def main():
             st.sidebar.error("No data for selected range.")
     
     # If All Sheds, show quick comparison first
-    if shed_filter == "All Sheds":
+    if shed_filter == "All Sheds (Overview)":
         # Current date/time display
         current_datetime = datetime.now()
         st.markdown(f"""
             <div class="section-header">
                 <span class="section-icon">🏭</span>
-                <span class="section-title">Shed Overview</span>
+                <span class="section-title">Meter Overview</span>
                 <span class="section-badge">Live Status</span>
                 <span class="section-badge" style="margin-left: auto;">📅 {current_datetime.strftime('%A, %b %d, %Y')} | 🕐 {current_datetime.strftime('%H:%M:%S')}</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Explanation banner
+        st.markdown("""
+            <div style="background: rgba(17, 138, 178, 0.1); border: 1px solid #118ab2; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                <strong>📊 Meter Hierarchy:</strong> Shed 1 is the <strong>main meter</strong> measuring total facility consumption. 
+                Shed 2 is a <strong>sub-meter</strong> on a specific circuit - its readings are <em>already included</em> in Shed 1's total.
+                <br><small style="color: #8899a6;">KPIs below use Shed 1 data to avoid double-counting.</small>
             </div>
         """, unsafe_allow_html=True)
         
@@ -1398,7 +1418,7 @@ def main():
             for idx, (_, row) in enumerate(latest.iterrows()):
                 with shed_cols[idx]:
                     is_main = '01' in str(row.get('Device_ID', '')) or '01' in str(row.get('Location', ''))
-                    shed_type = "Main Feed" if is_main else "Sub-Feed"
+                    shed_type = "Main Meter (Total)" if is_main else "Sub-Meter (Subset)"
                     border_color = "#06d6a0" if is_main else "#118ab2"
                     
                     fire_risk = str(row.get('Fire_Risk_Level', 'NORMAL')).upper()

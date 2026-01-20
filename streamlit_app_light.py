@@ -32,13 +32,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ============= CUSTOM CSS - LIGHT THEME =============
+# ============= CUSTOM CSS =============
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
     
     :root {
-        --bg-primary: #f8f9fa;
+        --bg-primary: #0a0e14;
         --bg-card: #ffffff;
         --bg-elevated: #f1f3f4;
         --text-primary: #1a1a2e;
@@ -49,13 +49,12 @@ st.markdown("""
         --yellow: #d97706;
         --red: #dc2626;
         --blue: #2563eb;
-        --purple: #7c3aed;
-        --orange: #ea580c;
-        --green: #059669;
+        --purple: #9d4edd;
+        --orange: #f77f00;
     }
     
     .stApp {
-        background: linear-gradient(180deg, #f8f9fa 0%, #eef2f6 100%);
+        background: linear-gradient(180deg, #0a0e14 0%, #111820 100%);
     }
     
     .main-header {
@@ -424,6 +423,8 @@ def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
         
         if 'Timestamp' in df.columns:
             df = df.dropna(subset=['Timestamp'])
+            # CRITICAL: Sort by timestamp to ensure chronological order
+            df = df.sort_values('Timestamp').reset_index(drop=True)
         
         return df
     except Exception as e:
@@ -460,10 +461,24 @@ def calculate_kpis(df):
     n = len(df)
     kpis['total_readings'] = n
     
-    # Basic stats using safe helpers
-    energy_max = safe_get(df, 'Energy_kWh', 0, 'max')
-    energy_min = safe_get(df, 'Energy_kWh', 0, 'min')
-    kpis['total_energy'] = max(0, energy_max - energy_min)
+    # Energy calculation - handle meter resets properly
+    # Use diff method to sum only positive increments (ignore resets)
+    if 'Energy_kWh' in df.columns and 'Timestamp' in df.columns:
+        try:
+            df_sorted = df.sort_values('Timestamp').copy()
+            energy_diff = df_sorted['Energy_kWh'].diff()
+            # Only count positive diffs less than 500 kWh (reasonable max per reading)
+            # Negative diffs = meter reset, very large diffs = data error
+            valid_energy = energy_diff.apply(lambda x: x if (pd.notna(x) and 0 < x < 500) else 0)
+            kpis['total_energy'] = valid_energy.sum()
+        except:
+            # Fallback to max-min method
+            energy_max = safe_get(df, 'Energy_kWh', 0, 'max')
+            energy_min = safe_get(df, 'Energy_kWh', 0, 'min')
+            kpis['total_energy'] = max(0, energy_max - energy_min)
+    else:
+        kpis['total_energy'] = 0
+    
     kpis['total_cost'] = safe_get(df, 'Daily_Cost_Rs', 0, 'sum')
     kpis['peak_demand'] = safe_get(df, 'kW_Total', 0, 'max')
     kpis['max_demand_recorded'] = safe_get(df, 'Max_Demand_kW', 0, 'max')
@@ -1206,6 +1221,8 @@ def main():
                 
                 if 'Timestamp' in df.columns:
                     df = df.dropna(subset=['Timestamp'])
+                    # CRITICAL: Sort by timestamp to ensure chronological order
+                    df = df.sort_values('Timestamp').reset_index(drop=True)
                     
             except Exception as e:
                 st.error(f"❌ Error loading CSV: {e}")
@@ -1252,6 +1269,8 @@ def main():
                 
                 if 'Timestamp' in df.columns:
                     df = df.dropna(subset=['Timestamp'])
+                    # CRITICAL: Sort by timestamp to ensure chronological order
+                    df = df.sort_values('Timestamp').reset_index(drop=True)
                     
             except Exception as e:
                 st.error(f"❌ Error loading CSV: {e}")
@@ -1847,11 +1866,34 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                daily = df.groupby(pd.to_datetime(df['Date']).dt.date).agg({
-                    'Energy_kWh': lambda x: x.max() - x.min() if len(x) > 1 else 0,
+                # CRITICAL: Sort by timestamp first to ensure chronological order
+                df_sorted = df.sort_values('Timestamp').copy()
+                
+                # Calculate daily energy using diff method (handles jumbled data correctly)
+                def calc_daily_energy(group):
+                    """Calculate energy for a day using cumulative meter readings"""
+                    if len(group) < 2:
+                        return 0
+                    # Sort by timestamp within the group
+                    group_sorted = group.sort_values('Timestamp')
+                    # Use last reading minus first reading for the day
+                    first_val = group_sorted['Energy_kWh'].iloc[0]
+                    last_val = group_sorted['Energy_kWh'].iloc[-1]
+                    energy = last_val - first_val
+                    # If negative (meter reset or data issue), try diff method
+                    if energy < 0:
+                        diffs = group_sorted['Energy_kWh'].diff()
+                        energy = diffs[diffs > 0].sum()
+                    return max(0, energy)
+                
+                daily = df_sorted.groupby(pd.to_datetime(df_sorted['Date']).dt.date).agg({
+                    'Energy_kWh': calc_daily_energy,
                     'kW_Total': 'max'
                 }).reset_index()
                 daily.columns = ['Date', 'Energy_kWh', 'Peak_kW']
+                
+                # Filter out unrealistic values (more than 10,000 kWh per day is likely an error)
+                daily = daily[daily['Energy_kWh'] < 10000]
                 
                 # Add day of week info for coloring
                 daily['Date'] = pd.to_datetime(daily['Date'])
@@ -1932,6 +1974,9 @@ def main():
                     df_day = df[df['Date'].dt.date == selected_date].copy()
                     
                     if len(df_day) > 0 and 'ToD_Period' in df_day.columns:
+                        # CRITICAL: Sort by timestamp first
+                        df_day = df_day.sort_values('Timestamp').copy()
+                        
                         # Normalize ToD periods
                         df_day['Shift'] = df_day['ToD_Period'].str.upper().str.replace('-', '').str.strip()
                         df_day['Shift'] = df_day['Shift'].map({
@@ -1945,9 +1990,16 @@ def main():
                         rates = {'🌙 Off-Peak (11PM-6AM)': 5.18, '☀️ Normal (6AM-5PM)': 6.87, '🔥 Peak (5PM-11PM)': 8.37}
                         
                         for shift in ['🌙 Off-Peak (11PM-6AM)', '☀️ Normal (6AM-5PM)', '🔥 Peak (5PM-11PM)']:
-                            df_shift = df_day[df_day['Shift'] == shift]
-                            if len(df_shift) > 0 and 'Energy_kWh' in df_shift.columns:
-                                energy = df_shift['Energy_kWh'].max() - df_shift['Energy_kWh'].min()
+                            df_shift = df_day[df_day['Shift'] == shift].sort_values('Timestamp')
+                            if len(df_shift) > 1 and 'Energy_kWh' in df_shift.columns:
+                                # Use first and last reading (chronologically sorted)
+                                first_val = df_shift['Energy_kWh'].iloc[0]
+                                last_val = df_shift['Energy_kWh'].iloc[-1]
+                                energy = last_val - first_val
+                                # If negative, try diff method
+                                if energy < 0:
+                                    diffs = df_shift['Energy_kWh'].diff()
+                                    energy = diffs[diffs > 0].sum()
                                 energy = max(0, energy)
                             else:
                                 energy = 0
