@@ -2019,8 +2019,8 @@ def main():
                     # Add weekend shading
                     for _, row in daily[daily['IsWeekend']].iterrows():
                         fig.add_vrect(
-                            x0=row['Date'] - pd.Timedelta(hours=12),
-                            x1=row['Date'] + pd.Timedelta(hours=12),
+                            x0=pd.Timestamp(row['Date']) - pd.Timedelta(hours=12),
+                            x1=pd.Timestamp(row['Date']) + pd.Timedelta(hours=12),
                             fillcolor="rgba(17, 138, 178, 0.1)",
                             layer="below",
                             line_width=0,
@@ -2088,7 +2088,7 @@ def main():
                         # Add annotations for high consumption days
                         for _, high_day in high_days.iterrows():
                             # Find the corresponding meter reading at end of that day
-                            day_data = df_chart[df_chart['Date'] == high_day['Date'].date()]
+                            day_data = df_chart[df_chart['Date'] == pd.to_datetime(high_day['Date']).date()]
                             if len(day_data) > 0:
                                 day_end = day_data.iloc[-1]
                                 fig_cumulative.add_annotation(
