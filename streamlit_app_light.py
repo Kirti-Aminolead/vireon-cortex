@@ -2050,7 +2050,7 @@ def main():
                     # Prepare data with daily consumption calculation
                     df_chart = df[['Timestamp', 'Energy_kWh', 'Location']].copy()
                     df_chart = df_chart.sort_values('Timestamp')
-                    df_chart['Date'] = df_chart['Timestamp'].dt.date
+                    df_chart['Date'] = df_chart['Timestamp'].dt.normalize()
                     df_chart['Week'] = df_chart['Timestamp'].dt.isocalendar().week
                     df_chart['DayName'] = df_chart['Timestamp'].dt.strftime('%a')
                     
@@ -2088,7 +2088,7 @@ def main():
                         # Add annotations for high consumption days
                         for _, high_day in high_days.iterrows():
                             # Find the corresponding meter reading at end of that day
-                            day_data = df_chart[df_chart['Date'] == pd.to_datetime(high_day['Date']).date()]
+                            day_data = df_chart[df_chart['Date'] == pd.Timestamp(high_day['Date']).normalize()]
                             if len(day_data) > 0:
                                 day_end = day_data.iloc[-1]
                                 fig_cumulative.add_annotation(
