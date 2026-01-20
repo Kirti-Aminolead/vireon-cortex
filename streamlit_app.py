@@ -406,11 +406,25 @@ def main():
     # Sidebar for config
     with st.sidebar:
         st.markdown("### ⚙️ Configuration")
+        
+        # Default Sheet ID - change this to your sheet
+        DEFAULT_SHEET_ID = "10VSKQgLx-OSMMpbIXqgbb06DF_zgVetcm2s8sW1Wps0"
+        
         sheet_id = st.text_input(
             "Google Sheet ID",
-            value=st.secrets.get("sheet_id", ""),
+            value=st.secrets.get("sheet_id", DEFAULT_SHEET_ID),
             help="From URL: docs.google.com/spreadsheets/d/**SHEET_ID**/edit"
         )
+        st.markdown("---")
+        st.markdown("### 🏭 Shed Filter")
+        shed_filter = st.radio(
+            "Select View",
+            options=["Shed 1 (Main Feed)", "Shed 2 (Sub-Feed)", "All Sheds"],
+            index=0,
+            help="Shed 2 draws power from Shed 1's main feed"
+        )
+        if shed_filter == "Shed 2 (Sub-Feed)":
+            st.info("⚡ Shed 2 is a sub-feed from Shed 1. Its consumption is part of Shed 1's total.")
         st.markdown("---")
         st.markdown("""
         **Setup:**
@@ -423,7 +437,7 @@ def main():
     col1, col2 = st.columns([3, 1])
     with col1:
         st.markdown('<h1 class="main-header">⚡ VIREON CORTEX</h1>', unsafe_allow_html=True)
-        st.markdown('<p class="subtitle">Advanced Energy Analytics | Omega Transmission POC</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="subtitle">Advanced Energy Analytics | {shed_label} | Omega Transmission POC</p>', unsafe_allow_html=True)
     
     with col2:
         tod_period, tod_class = get_tod_period()
@@ -451,8 +465,81 @@ def main():
         st.error("❌ No data available. Check Sheet ID and ensure it's published to web.")
         return
     
+    # Apply shed filter
+    if 'Device_ID' in df.columns or 'Location' in df.columns:
+        location_col = 'Location' if 'Location' in df.columns else 'Device_ID'
+        
+        if shed_filter == "Shed 1 (Main Feed)":
+            df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
+            shed_label = "Shed 1 (Main Feed)"
+        elif shed_filter == "Shed 2 (Sub-Feed)":
+            df = df[df[location_col].str.contains('02|Shed_02|Shed 2', case=False, na=False)]
+            shed_label = "Shed 2 (Sub-Feed from Shed 1)"
+        else:
+            shed_label = "All Sheds Combined"
+        
+        if df.empty:
+            st.warning(f"No data found for {shed_filter}. Try a different filter.")
+            return
+    else:
+        shed_label = "All Data"
+    
     # Calculate KPIs
     kpis = calculate_kpis(df)
+    
+    # If All Sheds, show quick comparison first
+    if shed_filter == "All Sheds":
+        st.markdown("""
+            <div class="section-header">
+                <span class="section-icon">🏭</span>
+                <span class="section-title">Shed Overview</span>
+                <span class="section-badge">Live Status</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # Get latest reading per shed
+        df_full = load_data_from_public_sheet(sheet_id)
+        if df_full is not None and 'Location' in df_full.columns:
+            latest = df_full.sort_values('Timestamp').groupby('Location').last().reset_index()
+            
+            shed_cols = st.columns(len(latest))
+            for idx, (_, row) in enumerate(latest.iterrows()):
+                with shed_cols[idx]:
+                    is_main = '01' in str(row.get('Device_ID', '')) or '01' in str(row.get('Location', ''))
+                    shed_type = "Main Feed" if is_main else "Sub-Feed"
+                    border_color = "#06d6a0" if is_main else "#118ab2"
+                    
+                    fire_risk = str(row.get('Fire_Risk_Level', 'NORMAL')).upper()
+                    fire_color = "#06d6a0" if fire_risk == "NORMAL" else "#ffd166" if fire_risk == "WARNING" else "#f77f00" if fire_risk == "HIGH" else "#ef476f"
+                    
+                    st.markdown(f"""
+                        <div class="kpi-card" style="border-top: 3px solid {border_color};">
+                            <div class="kpi-title" style="color: {border_color};">
+                                📍 {row.get('Location', 'Unknown')} ({shed_type})
+                            </div>
+                            <div class="kpi-metric">
+                                <span class="kpi-label">Power</span>
+                                <span class="kpi-value">{row.get('kW_Total', 0):.1f} kW</span>
+                            </div>
+                            <div class="kpi-metric">
+                                <span class="kpi-label">Current</span>
+                                <span class="kpi-value">{row.get('Current_Total', 0):.1f} A</span>
+                            </div>
+                            <div class="kpi-metric">
+                                <span class="kpi-label">Power Factor</span>
+                                <span class="kpi-value">{row.get('PF_Avg', 0):.3f}</span>
+                            </div>
+                            <div class="kpi-metric">
+                                <span class="kpi-label">Fire Risk</span>
+                                <span class="kpi-value" style="color: {fire_color};">🔥 {fire_risk}</span>
+                            </div>
+                            <div class="kpi-insight">
+                                Updated: {row['Timestamp'].strftime('%H:%M:%S') if pd.notna(row.get('Timestamp')) else 'N/A'}
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
     
     # Get date range
     date_min = df['Date'].min().strftime('%b %d') if pd.notna(df['Date'].min()) else 'N/A'
