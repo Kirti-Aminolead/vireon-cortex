@@ -1984,10 +1984,14 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                # Calculate daily consumption
+                # Data is already cleaned and sorted at load time by clean_cumulative_meter_data()
+                # Calculate daily consumption: last reading - first reading for each day
+                
+                # Group by date and calculate energy (data already sorted by timestamp)
                 daily_stats = []
                 for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
                     if len(group) >= 2:
+                        # Data is already sorted by timestamp from loading
                         first_energy = group['Energy_kWh'].iloc[0]
                         last_energy = group['Energy_kWh'].iloc[-1]
                         energy = max(0, last_energy - first_energy)
@@ -2001,63 +2005,231 @@ def main():
                 if len(daily) == 0:
                     st.warning("No daily data available")
                 else:
-                    daily = daily[daily['Energy_kWh'] < 2000]
-                    daily['Date'] = pd.to_datetime(daily['Date'])
-                    daily['DayName'] = daily['Date'].dt.strftime('%a')
+                    # Filter out only unrealistic values (keep 0 kWh days - server might be down)
+                    daily = daily[daily['Energy_kWh'] < 2000]  # Max 2000 kWh/day is reasonable
                     
-                    # Simple bar chart
+                    # Add day of week info for coloring
+                    daily['Date'] = pd.to_datetime(daily['Date'])
+                    daily['DayOfWeek'] = daily['Date'].dt.dayofweek  # 0=Mon, 6=Sun
+                    daily['DayName'] = daily['Date'].dt.strftime('%a')  # Mon, Tue, etc.
+                    daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])  # Sat=5, Sun=6
+                    daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
+                    
+                    # Create bar chart with weekend/weekday colors
                     fig = px.bar(daily, x='Date', y='Energy_kWh', 
-                                title='Daily Energy Consumption',
+                                color='DayType',
+                                color_discrete_map={
+                                    '🟢 Weekday': '#4ecdc4',
+                                    '🔵 Weekend': '#ff6b6b'
+                                },
+                                title='Daily Energy Consumption (Weekday vs Weekend)',
                                 hover_data={'DayName': True, 'Peak_kW': ':.1f', 'Energy_kWh': ':.1f'})
+                    
                     fig.update_layout(
                         paper_bgcolor='rgba(0,0,0,0)', 
                         plot_bgcolor='rgba(21,29,40,1)',
                         font_color='#8899a6', 
-                        title_font_color='#f0f4f8'
+                        title_font_color='#f0f4f8',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
                     )
-                    fig.update_xaxes(gridcolor='#253040', tickformat='%b %d')
+                    fig.update_xaxes(gridcolor='#253040', tickformat='%b %d\n%a')
                     fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
+                    
+                    # Add weekend shading
+                    for _, row in daily[daily['IsWeekend']].iterrows():
+                        dt = pd.Timestamp(row['Date'])
+                        fig.add_vrect(
+                            x0=dt - pd.Timedelta(hours=12),
+                            x1=dt + pd.Timedelta(hours=12),
+                            fillcolor="rgba(17, 138, 178, 0.1)",
+                            layer="below",
+                            line_width=0,
+                        )
+                    
                     st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show weekday vs weekend summary
+                    weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
+                    weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Weekday Avg", f"{weekday_avg:.1f} kWh")
+                    with col2:
+                        st.metric("Weekend Avg", f"{weekend_avg:.1f} kWh")
+                    with col3:
+                        diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
+                        st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
                 
-                # Simple Cumulative Energy Chart
+                # Cumulative Energy Meter Reading Chart
                 st.markdown("---")
                 st.markdown("#### 📈 Cumulative Meter Reading")
+                st.caption("Data cleaned at load: invalid readings (meter decreases, unrealistic jumps) already removed")
                 
-                if len(df) > 0 and 'Timestamp' in df.columns and 'Energy_kWh' in df.columns:
+                if len(df) > 0:
+                    # Prepare data with daily consumption calculation
                     df_chart = df[['Timestamp', 'Energy_kWh', 'Location']].copy()
                     df_chart = df_chart.sort_values('Timestamp')
+                    df_chart['Date'] = df_chart['Timestamp'].dt.date
+                    df_chart['Week'] = df_chart['Timestamp'].dt.isocalendar().week
+                    df_chart['DayName'] = df_chart['Timestamp'].dt.strftime('%a')
                     
                     fig_cumulative = px.line(
                         df_chart, 
                         x='Timestamp', 
                         y='Energy_kWh',
-                        color='Location' if df_chart['Location'].nunique() > 1 else None,
-                        title='Cumulative Energy Meter Reading Over Time'
+                        color='Location' if 'Location' in df_chart.columns and df_chart['Location'].nunique() > 1 else None,
+                        title='Cumulative Energy Meter Reading Over Time',
+                        markers=False
                     )
+                    
                     fig_cumulative.update_layout(
                         paper_bgcolor='rgba(0,0,0,0)', 
                         plot_bgcolor='rgba(21,29,40,1)',
                         font_color='#8899a6', 
-                        title_font_color='#f0f4f8'
+                        title_font_color='#f0f4f8',
+                        hovermode='x unified'
                     )
-                    fig_cumulative.update_xaxes(gridcolor='#253040', title='Date')
-                    fig_cumulative.update_yaxes(gridcolor='#253040', title='Meter Reading (kWh)')
+                    fig_cumulative.update_xaxes(gridcolor='#253040', title='Date', showgrid=True)
+                    fig_cumulative.update_yaxes(gridcolor='#253040', title='Meter Reading (kWh)', showgrid=True)
+                    fig_cumulative.update_traces(line=dict(width=2))
+                    
                     st.plotly_chart(fig_cumulative, use_container_width=True)
                     
                     # Show meter reading stats
+                    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+                    
+                    # Stats per location
                     for loc in df['Location'].unique():
                         df_loc = df[df['Location'] == loc].sort_values('Timestamp')
                         if len(df_loc) > 1:
                             first_reading = df_loc['Energy_kWh'].iloc[0]
                             last_reading = df_loc['Energy_kWh'].iloc[-1]
                             total_consumed = last_reading - first_reading
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
+                            
+                            with col_m1:
                                 st.metric(f"{loc} First", f"{first_reading:,.1f} kWh")
-                            with col2:
+                            with col_m2:
                                 st.metric(f"{loc} Latest", f"{last_reading:,.1f} kWh")
-                            with col3:
+                            with col_m3:
                                 st.metric(f"{loc} Consumed", f"{total_consumed:,.1f} kWh")
+                    
+                    with col_m4:
+                        st.metric("✅ Data", "Cleaned at load")
+                
+                # Shift-wise Distribution Section
+                st.markdown("---")
+                st.markdown("#### 🔄 Shift-wise Analysis")
+                
+                # Date selector - data already cleaned at load
+                available_dates = sorted(pd.to_datetime(df['Date']).dt.date.dropna().unique())
+                if len(available_dates) > 0:
+                    col_date, col_shift = st.columns([2, 3])
+                    
+                    with col_date:
+                        selected_date = st.selectbox(
+                            "Select Date for Details",
+                            options=available_dates,
+                            index=len(available_dates)-1,  # Default to latest
+                            format_func=lambda x: x.strftime('%Y-%m-%d (%A)')
+                        )
+                    
+                    # Filter for selected date (data already cleaned)
+                    df_day = df[df['Date'].dt.date == selected_date].copy()
+                    df_day = df_day.sort_values('Timestamp')
+                    
+                    if len(df_day) > 0 and 'ToD_Period' in df_day.columns:
+                        # Normalize ToD periods
+                        df_day['Shift'] = df_day['ToD_Period'].str.upper().str.replace('-', '').str.strip()
+                        df_day['Shift'] = df_day['Shift'].map({
+                            'OFFPEAK': '🌙 Off-Peak (11PM-6AM)',
+                            'NORMAL': '☀️ Normal (6AM-5PM)',
+                            'PEAK': '🔥 Peak (5PM-11PM)'
+                        }).fillna('Unknown')
+                        
+                        # Calculate energy and cost per shift
+                        shift_summary = []
+                        rates = {'🌙 Off-Peak (11PM-6AM)': 5.18, '☀️ Normal (6AM-5PM)': 6.87, '🔥 Peak (5PM-11PM)': 8.37}
+                        
+                        for shift in ['🌙 Off-Peak (11PM-6AM)', '☀️ Normal (6AM-5PM)', '🔥 Peak (5PM-11PM)']:
+                            df_shift = df_day[df_day['Shift'] == shift].sort_values('Timestamp')
+                            if len(df_shift) > 1 and 'Energy_kWh' in df_shift.columns:
+                                first_val = df_shift['Energy_kWh'].iloc[0]
+                                last_val = df_shift['Energy_kWh'].iloc[-1]
+                                energy = last_val - first_val
+                                energy = max(0, energy)
+                            else:
+                                energy = 0
+                            
+                            rate = rates.get(shift, 6.87)
+                            cost = energy * rate
+                            readings = len(df_shift)
+                            
+                            shift_summary.append({
+                                'Shift': shift,
+                                'Readings': readings,
+                                'Energy (kWh)': energy,
+                                'Rate (₹/kWh)': rate,
+                                'Cost (₹)': cost
+                            })
+                        
+                        shift_df = pd.DataFrame(shift_summary)
+                        
+                        with col_shift:
+                            # Show shift distribution as horizontal bar
+                            if shift_df['Energy (kWh)'].sum() > 0:
+                                fig_shift = px.bar(
+                                    shift_df, 
+                                    x='Energy (kWh)', 
+                                    y='Shift',
+                                    orientation='h',
+                                    color='Shift',
+                                    color_discrete_map={
+                                        '🌙 Off-Peak (11PM-6AM)': '#118ab2',
+                                        '☀️ Normal (6AM-5PM)': '#06d6a0',
+                                        '🔥 Peak (5PM-11PM)': '#ef476f'
+                                    },
+                                    title=f'Energy by Shift - {selected_date.strftime("%b %d, %Y")}'
+                                )
+                                fig_shift.update_layout(
+                                    paper_bgcolor='rgba(0,0,0,0)', 
+                                    plot_bgcolor='rgba(21,29,40,1)',
+                                    font_color='#8899a6',
+                                    showlegend=False,
+                                    height=200
+                                )
+                                fig_shift.update_xaxes(gridcolor='#253040')
+                                fig_shift.update_yaxes(gridcolor='#253040')
+                                st.plotly_chart(fig_shift, use_container_width=True)
+                        
+                        # Show detailed table
+                        st.markdown(f"**📊 {selected_date.strftime('%A, %b %d, %Y')} - Shift Breakdown**")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        for i, row in shift_df.iterrows():
+                            with [col1, col2, col3][i]:
+                                shift_name = row['Shift'].split(' ')[0]  # Just emoji
+                                st.markdown(f"""
+                                    <div class="kpi-card" style="padding: 10px;">
+                                        <div class="kpi-title">{row['Shift']}</div>
+                                        <div class="kpi-value">{row['Energy (kWh)']:.1f} kWh</div>
+                                        <div class="kpi-label">₹{row['Cost (₹)']:.0f} @ ₹{row['Rate (₹/kWh)']}/kWh</div>
+                                        <div class="kpi-insight">{row['Readings']} readings</div>
+                                    </div>
+                                """, unsafe_allow_html=True)
+                        
+                        # Day total
+                        total_energy = shift_df['Energy (kWh)'].sum()
+                        total_cost = shift_df['Cost (₹)'].sum()
+                        st.markdown(f"**Day Total:** {total_energy:.1f} kWh | ₹{total_cost:.0f}")
+                    else:
+                        st.info("No ToD data available for this date.")
             else:
                 st.info("Energy data not available for chart.")
         except Exception as e:
