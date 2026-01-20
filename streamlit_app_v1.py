@@ -338,13 +338,41 @@ def load_data_from_public_sheet(sheet_id, sheet_name="readings"):
         
         df = pd.read_csv(StringIO(response.text))
         
-        # Handle Timestamp column
+        # Handle Timestamp column - try multiple formats
         if 'Timestamp' in df.columns:
+            # First try standard datetime parsing
             df['Timestamp'] = pd.to_datetime(df['Timestamp'], errors='coerce')
+            
+            # If most timestamps are NaT, try Excel serial number conversion
+            if df['Timestamp'].isna().sum() > len(df) * 0.5:
+                try:
+                    # Reload original column
+                    df_temp = pd.read_csv(StringIO(response.text))
+                    ts_col = df_temp['Timestamp']
+                    
+                    # Check if numeric (Excel serial)
+                    ts_numeric = pd.to_numeric(ts_col, errors='coerce')
+                    if ts_numeric.notna().sum() > len(df) * 0.5:
+                        # Convert Excel serial to datetime (Excel epoch: 1899-12-30)
+                        df['Timestamp'] = pd.to_datetime('1899-12-30') + pd.to_timedelta(ts_numeric, unit='D')
+                except Exception:
+                    pass
         
         # Handle Date column - ensure it exists
         if 'Date' in df.columns:
+            # First try standard parsing
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            
+            # If most dates are NaT, try Excel serial
+            if df['Date'].isna().sum() > len(df) * 0.5:
+                try:
+                    df_temp = pd.read_csv(StringIO(response.text))
+                    date_col = df_temp['Date']
+                    date_numeric = pd.to_numeric(date_col, errors='coerce')
+                    if date_numeric.notna().sum() > len(df) * 0.5:
+                        df['Date'] = pd.to_datetime('1899-12-30') + pd.to_timedelta(date_numeric, unit='D')
+                except Exception:
+                    pass
         elif 'Timestamp' in df.columns:
             df['Date'] = pd.to_datetime(df['Timestamp'], errors='coerce')
         
@@ -644,6 +672,37 @@ def main():
     if df is None or df.empty:
         st.error("❌ No data available. Check Sheet ID and ensure it's published to web.")
         return
+    
+    # Debug expander - shows raw data info
+    with st.sidebar.expander("🔍 Debug Info", expanded=False):
+        st.write(f"**Rows loaded:** {len(df)}")
+        st.write(f"**Columns:** {len(df.columns)}")
+        st.write("**Column names:**")
+        st.code(", ".join(df.columns.tolist()[:20]))
+        
+        if 'Timestamp' in df.columns:
+            valid_ts = df['Timestamp'].notna().sum()
+            st.write(f"**Valid Timestamps:** {valid_ts}/{len(df)}")
+            if valid_ts > 0:
+                st.write(f"**First TS:** {df['Timestamp'].dropna().iloc[0]}")
+                st.write(f"**Last TS:** {df['Timestamp'].dropna().iloc[-1]}")
+            else:
+                st.warning("⚠️ No valid timestamps parsed!")
+                # Show raw timestamp sample
+                df_raw = pd.read_csv(StringIO(requests.get(f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=readings", timeout=10).text), nrows=3)
+                if 'Timestamp' in df_raw.columns:
+                    st.write("**Raw TS sample:**")
+                    st.code(str(df_raw['Timestamp'].tolist()))
+        
+        if 'Location' in df.columns:
+            st.write(f"**Locations:** {df['Location'].unique().tolist()}")
+        
+        # Show numeric column stats
+        for col in ['kW_Total', 'Energy_kWh', 'PF_Avg']:
+            if col in df.columns:
+                series = pd.to_numeric(df[col], errors='coerce')
+                valid = series.notna().sum()
+                st.write(f"**{col}:** {valid} valid, max={series.max() if valid > 0 else 'N/A'}")
     
     # Apply shed filter
     if 'Device_ID' in df.columns or 'Location' in df.columns:
