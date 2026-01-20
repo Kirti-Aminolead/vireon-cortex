@@ -32,68 +32,70 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ============= CUSTOM CSS =============
+# ============= CUSTOM CSS - LIGHT THEME =============
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
     
     :root {
-        --bg-primary: #0a0e14;
-        --bg-card: #151d28;
-        --bg-elevated: #1a242f;
-        --text-primary: #f0f4f8;
-        --text-secondary: #8899a6;
-        --text-muted: #5c6b7a;
-        --border: #253040;
-        --cyan: #06d6a0;
-        --yellow: #ffd166;
-        --red: #ef476f;
-        --blue: #118ab2;
-        --purple: #9d4edd;
-        --orange: #f77f00;
+        --bg-primary: #f8f9fa;
+        --bg-card: #ffffff;
+        --bg-elevated: #f1f3f4;
+        --text-primary: #1a1a2e;
+        --text-secondary: #4a5568;
+        --text-muted: #718096;
+        --border: #e2e8f0;
+        --cyan: #0d9488;
+        --yellow: #d97706;
+        --red: #dc2626;
+        --blue: #2563eb;
+        --purple: #7c3aed;
+        --orange: #ea580c;
+        --green: #059669;
     }
     
     .stApp {
-        background: linear-gradient(180deg, #0a0e14 0%, #111820 100%);
+        background: linear-gradient(180deg, #f8f9fa 0%, #eef2f6 100%);
     }
     
     .main-header {
         font-family: 'JetBrains Mono', monospace;
         font-size: 32px;
         font-weight: 700;
-        background: linear-gradient(135deg, #06d6a0 0%, #118ab2 100%);
+        background: linear-gradient(135deg, #0d9488 0%, #2563eb 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 0;
     }
     
-    .subtitle { color: #8899a6; font-size: 14px; }
+    .subtitle { color: #4a5568; font-size: 14px; }
     
     /* Summary Cards */
     .summary-card {
-        background: #151d28;
-        border: 1px solid #253040;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 18px;
         position: relative;
         overflow: hidden;
         height: 100%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .summary-card::before {
         content: '';
         position: absolute;
         top: 0; left: 0; right: 0;
         height: 3px;
-        background: #06d6a0;
+        background: #0d9488;
     }
-    .summary-card.yellow::before { background: #ffd166; }
-    .summary-card.red::before { background: #ef476f; }
-    .summary-card.blue::before { background: #118ab2; }
-    .summary-card.purple::before { background: #9d4edd; }
-    .summary-card.orange::before { background: #f77f00; }
+    .summary-card.yellow::before { background: #d97706; }
+    .summary-card.red::before { background: #dc2626; }
+    .summary-card.blue::before { background: #2563eb; }
+    .summary-card.purple::before { background: #7c3aed; }
+    .summary-card.orange::before { background: #ea580c; }
     .summary-label {
         font-size: 10px;
-        color: #8899a6;
+        color: #718096;
         text-transform: uppercase;
         letter-spacing: 0.5px;
         margin-bottom: 6px;
@@ -102,10 +104,10 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace;
         font-size: 24px;
         font-weight: 700;
-        color: #f0f4f8;
+        color: #1a1a2e;
     }
-    .summary-unit { font-size: 12px; color: #8899a6; }
-    .summary-subtext { font-size: 10px; color: #5c6b7a; margin-top: 4px; }
+    .summary-unit { font-size: 12px; color: #718096; }
+    .summary-subtext { font-size: 10px; color: #a0aec0; margin-top: 4px; }
     
     /* Section Headers */
     .section-header {
@@ -114,37 +116,38 @@ st.markdown("""
         gap: 12px;
         margin: 32px 0 20px 0;
         padding-bottom: 12px;
-        border-bottom: 1px solid #253040;
+        border-bottom: 1px solid #e2e8f0;
     }
     .section-icon {
         width: 36px;
         height: 36px;
-        background: #151d28;
-        border: 1px solid #253040;
+        background: #f1f3f4;
+        border: 1px solid #e2e8f0;
         border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
         font-size: 18px;
     }
-    .section-title { font-size: 18px; font-weight: 600; color: #f0f4f8; }
+    .section-title { font-size: 18px; font-weight: 600; color: #1a1a2e; }
     .section-badge {
-        background: #1a242f;
-        border: 1px solid #253040;
+        background: #f1f3f4;
+        border: 1px solid #e2e8f0;
         padding: 4px 10px;
         border-radius: 4px;
         font-size: 11px;
-        color: #8899a6;
+        color: #4a5568;
         font-family: 'JetBrains Mono', monospace;
     }
     
     /* KPI Cards */
     .kpi-card {
-        background: #151d28;
-        border: 1px solid #253040;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 20px;
         height: 100%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .kpi-title {
         font-size: 13px;
@@ -153,7 +156,7 @@ st.markdown("""
         display: flex;
         align-items: center;
         gap: 8px;
-        color: #f0f4f8;
+        color: #1a1a2e;
     }
     .status-dot {
         width: 8px;
@@ -161,20 +164,20 @@ st.markdown("""
         border-radius: 50%;
         margin-left: auto;
     }
-    .status-good { background: #06d6a0; box-shadow: 0 0 8px #06d6a0; }
-    .status-warning { background: #ffd166; box-shadow: 0 0 8px #ffd166; }
-    .status-critical { background: #ef476f; box-shadow: 0 0 8px #ef476f; }
+    .status-good { background: #059669; box-shadow: 0 0 8px rgba(5, 150, 105, 0.5); }
+    .status-warning { background: #d97706; box-shadow: 0 0 8px rgba(217, 119, 6, 0.5); }
+    .status-critical { background: #dc2626; box-shadow: 0 0 8px rgba(220, 38, 38, 0.5); }
     .kpi-metric {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
         margin-bottom: 8px;
     }
-    .kpi-label { font-size: 11px; color: #5c6b7a; }
-    .kpi-value { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color: #f0f4f8; }
+    .kpi-label { font-size: 11px; color: #718096; }
+    .kpi-value { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; color: #1a1a2e; }
     .kpi-bar {
         height: 6px;
-        background: #1a242f;
+        background: #e2e8f0;
         border-radius: 3px;
         margin-top: 12px;
         overflow: hidden;
@@ -185,10 +188,10 @@ st.markdown("""
     }
     .kpi-insight {
         font-size: 11px;
-        color: #8899a6;
+        color: #4a5568;
         margin-top: 12px;
         padding-top: 12px;
-        border-top: 1px solid #253040;
+        border-top: 1px solid #e2e8f0;
     }
     
     /* Risk Items */
@@ -199,69 +202,70 @@ st.markdown("""
         margin-top: 12px;
     }
     .risk-item {
-        background: #1a242f;
+        background: #f1f3f4;
         padding: 10px;
         border-radius: 8px;
         text-align: center;
-        border-left: 3px solid #253040;
+        border-left: 3px solid #e2e8f0;
     }
-    .risk-item.normal { border-left-color: #06d6a0; }
-    .risk-item.warning { border-left-color: #ffd166; }
-    .risk-item.high { border-left-color: #f77f00; }
-    .risk-item.critical { border-left-color: #ef476f; }
-    .risk-level { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .risk-count { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; }
-    .risk-pct { font-size: 10px; color: #5c6b7a; }
+    .risk-item.normal { border-left-color: #059669; background: #ecfdf5; }
+    .risk-item.warning { border-left-color: #d97706; background: #fffbeb; }
+    .risk-item.high { border-left-color: #ea580c; background: #fff7ed; }
+    .risk-item.critical { border-left-color: #dc2626; background: #fef2f2; }
+    .risk-level { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #4a5568; }
+    .risk-count { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: #1a1a2e; }
+    .risk-pct { font-size: 10px; color: #718096; }
     
     /* Recommendations */
     .rec-card {
-        background: #1a242f;
-        border: 1px solid #253040;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
         border-radius: 10px;
         padding: 16px;
         display: flex;
         gap: 12px;
         height: 100%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
     .rec-priority {
         width: 4px;
         border-radius: 2px;
         flex-shrink: 0;
     }
-    .rec-priority.high { background: #ef476f; }
-    .rec-priority.medium { background: #ffd166; }
-    .rec-priority.low { background: #06d6a0; }
-    .rec-title { font-weight: 600; font-size: 13px; color: #f0f4f8; margin-bottom: 4px; }
-    .rec-category { font-size: 10px; color: #5c6b7a; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-    .rec-insight { font-size: 11px; color: #8899a6; margin-bottom: 8px; }
-    .rec-action { font-size: 11px; color: #06d6a0; }
+    .rec-priority.high { background: #dc2626; }
+    .rec-priority.medium { background: #d97706; }
+    .rec-priority.low { background: #059669; }
+    .rec-title { font-weight: 600; font-size: 13px; color: #1a1a2e; margin-bottom: 4px; }
+    .rec-category { font-size: 10px; color: #718096; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .rec-insight { font-size: 11px; color: #4a5568; margin-bottom: 8px; }
+    .rec-action { font-size: 11px; color: #0d9488; }
     .rec-savings {
         margin-top: 10px;
         padding-top: 10px;
-        border-top: 1px solid #253040;
+        border-top: 1px solid #e2e8f0;
         display: flex;
         justify-content: space-between;
     }
-    .rec-savings-label { font-size: 9px; color: #5c6b7a; text-transform: uppercase; }
-    .rec-savings-value { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #06d6a0; font-weight: 600; }
+    .rec-savings-label { font-size: 9px; color: #718096; text-transform: uppercase; }
+    .rec-savings-value { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #0d9488; font-weight: 600; }
     
     /* Savings Banner */
     .savings-banner {
-        background: linear-gradient(135deg, rgba(6, 214, 160, 0.1) 0%, rgba(17, 138, 178, 0.1) 100%);
-        border: 2px solid #06d6a0;
+        background: linear-gradient(135deg, rgba(13, 148, 136, 0.1) 0%, rgba(37, 99, 235, 0.1) 100%);
+        border: 2px solid #0d9488;
         border-radius: 12px;
         padding: 24px;
         text-align: center;
         margin: 32px 0;
     }
-    .savings-label { font-size: 14px; color: #8899a6; margin-bottom: 8px; }
+    .savings-label { font-size: 14px; color: #4a5568; margin-bottom: 8px; }
     .savings-value {
         font-family: 'JetBrains Mono', monospace;
         font-size: 42px;
         font-weight: 700;
-        color: #06d6a0;
+        color: #0d9488;
     }
-    .savings-subtext { font-size: 12px; color: #5c6b7a; margin-top: 8px; }
+    .savings-subtext { font-size: 12px; color: #718096; margin-top: 8px; }
     
     /* ToD Badges */
     .tod-badge {
@@ -272,9 +276,19 @@ st.markdown("""
         font-size: 12px;
         font-weight: 600;
     }
-    .tod-offpeak { background: rgba(6, 214, 160, 0.2); color: #06d6a0; border: 1px solid #06d6a0; }
-    .tod-normal { background: rgba(255, 209, 102, 0.2); color: #ffd166; border: 1px solid #ffd166; }
-    .tod-peak { background: rgba(239, 71, 111, 0.2); color: #ef476f; border: 1px solid #ef476f; }
+    .tod-offpeak { background: rgba(5, 150, 105, 0.15); color: #059669; border: 1px solid #059669; }
+    .tod-normal { background: rgba(217, 119, 6, 0.15); color: #d97706; border: 1px solid #d97706; }
+    .tod-peak { background: rgba(220, 38, 38, 0.15); color: #dc2626; border: 1px solid #dc2626; }
+    
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: #ffffff;
+        border-right: 1px solid #e2e8f0;
+    }
+    
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        color: #1a1a2e;
+    }
     
     /* Hide Streamlit elements */
     #MainMenu {visibility: hidden;}
@@ -283,6 +297,47 @@ st.markdown("""
     
     div[data-testid="stMetricValue"] {
         font-family: 'JetBrains Mono', monospace;
+        color: #1a1a2e;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        background: #f1f3f4;
+        border-radius: 8px;
+        padding: 4px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: #4a5568;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: #ffffff;
+        color: #1a1a2e;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background: #f1f3f4;
+        border-radius: 8px;
+    }
+    
+    /* Input styling */
+    .stTextInput input, .stSelectbox select {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        color: #1a1a2e;
+    }
+    
+    /* Button styling */
+    .stButton button {
+        background: #0d9488;
+        color: white;
+        border: none;
+    }
+    
+    .stButton button:hover {
+        background: #0f766e;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1852,8 +1907,8 @@ def main():
                 fig.update_layout(
                     paper_bgcolor='rgba(0,0,0,0)', 
                     plot_bgcolor='rgba(21,29,40,1)',
-                    font_color='#8899a6', 
-                    title_font_color='#f0f4f8',
+                    font_color='#4a5568', 
+                    title_font_color='#1a1a2e',
                     legend=dict(
                         orientation="h",
                         yanchor="bottom",
@@ -1862,8 +1917,8 @@ def main():
                         x=1
                     )
                 )
-                fig.update_xaxes(gridcolor='#253040', tickformat='%b %d\n%a')
-                fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
+                fig.update_xaxes(gridcolor='#e2e8f0', tickformat='%b %d\n%a')
+                fig.update_yaxes(gridcolor='#e2e8f0', title='Energy (kWh)')
                 
                 # Add weekend shading
                 for _, row in daily[daily['IsWeekend']].iterrows():
@@ -1964,12 +2019,12 @@ def main():
                                 fig_shift.update_layout(
                                     paper_bgcolor='rgba(0,0,0,0)', 
                                     plot_bgcolor='rgba(21,29,40,1)',
-                                    font_color='#8899a6',
+                                    font_color='#4a5568',
                                     showlegend=False,
                                     height=200
                                 )
-                                fig_shift.update_xaxes(gridcolor='#253040')
-                                fig_shift.update_yaxes(gridcolor='#253040')
+                                fig_shift.update_xaxes(gridcolor='#e2e8f0')
+                                fig_shift.update_yaxes(gridcolor='#e2e8f0')
                                 st.plotly_chart(fig_shift, use_container_width=True)
                         
                         # Show detailed table
@@ -2009,7 +2064,7 @@ def main():
                         'Normal': '#06d6a0', 'Warning': '#ffd166',
                         'High': '#f77f00', 'Critical': '#ef476f'
                     })
-        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#8899a6')
+        fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#4a5568')
         st.plotly_chart(fig, use_container_width=True)
     
     with tab3:
@@ -2027,11 +2082,11 @@ def main():
                             '25-50%': '#06d6a0', '50-75%': '#118ab2', '> 75%': '#ef476f'
                         })
             fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(21,29,40,1)',
-                font_color='#8899a6', showlegend=False
+                paper_bgcolor='rgba(255,255,255,1)', plot_bgcolor='rgba(248,249,250,1)',
+                font_color='#4a5568', showlegend=False
             )
-            fig.update_xaxes(gridcolor='#253040', title='% of Time')
-            fig.update_yaxes(gridcolor='#253040', title='')
+            fig.update_xaxes(gridcolor='#e2e8f0', title='% of Time')
+            fig.update_yaxes(gridcolor='#e2e8f0', title='')
             st.plotly_chart(fig, use_container_width=True)
     
     with tab4:
@@ -2046,7 +2101,7 @@ def main():
                                 color=tod_data.index, color_discrete_map={
                                     'OFFPEAK': '#06d6a0', 'NORMAL': '#ffd166', 'PEAK': '#ef476f'
                                 })
-                    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#8899a6')
+                    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#4a5568')
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No ToD data available")
