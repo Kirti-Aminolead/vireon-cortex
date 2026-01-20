@@ -296,7 +296,7 @@ def clean_cumulative_meter_data(df):
     Energy_kWh is a cumulative register like an odometer - it should ALWAYS increase.
     This function removes invalid readings where:
     - Meter value decreases (impossible for cumulative register)
-    - Unrealistic jumps > 500 kWh between consecutive readings
+    - Unrealistic consumption rate (> 200 kW average between readings)
     
     Processes each Location separately since they have different meters.
     """
@@ -312,23 +312,44 @@ def clean_cumulative_meter_data(df):
             cleaned_frames.append(df_loc)
             continue
         
-        # Keep only monotonically increasing readings
+        # Keep only monotonically increasing readings with reasonable consumption rate
         valid_mask = [True]  # First reading is always valid
+        last_valid_idx = 0
         last_valid_energy = df_loc['Energy_kWh'].iloc[0]
+        last_valid_time = df_loc['Timestamp'].iloc[0]
         
         for i in range(1, len(df_loc)):
             current_energy = df_loc['Energy_kWh'].iloc[i]
-            if pd.isna(current_energy):
+            current_time = df_loc['Timestamp'].iloc[i]
+            
+            if pd.isna(current_energy) or pd.isna(current_time):
                 valid_mask.append(False)
                 continue
-            # Valid if: current >= last (small tolerance) AND reasonable jump
+            
+            # Check if energy is increasing
             if current_energy >= last_valid_energy - 0.01:
-                jump = current_energy - last_valid_energy
-                if jump < 500:  # Max 500 kWh between readings is reasonable
-                    valid_mask.append(True)
-                    last_valid_energy = current_energy
+                energy_diff = current_energy - last_valid_energy
+                time_diff_hours = (current_time - last_valid_time).total_seconds() / 3600
+                
+                # Calculate average power (kW) during this interval
+                # Max reasonable: 200 kW (contracted demand is 200 kW)
+                if time_diff_hours > 0:
+                    avg_power_kw = energy_diff / time_diff_hours
+                    if avg_power_kw <= 250:  # Allow up to 250 kW (some buffer over contract)
+                        valid_mask.append(True)
+                        last_valid_energy = current_energy
+                        last_valid_time = current_time
+                        last_valid_idx = i
+                    else:
+                        valid_mask.append(False)  # Unrealistic power consumption
                 else:
-                    valid_mask.append(False)  # Unrealistic jump - data error
+                    # Same timestamp - keep if energy is same or slightly higher
+                    if energy_diff < 1:
+                        valid_mask.append(True)
+                        last_valid_energy = current_energy
+                        last_valid_time = current_time
+                    else:
+                        valid_mask.append(False)
             else:
                 valid_mask.append(False)  # Decreasing = invalid for cumulative meter
         
@@ -1923,85 +1944,87 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                # Data is already cleaned at load time by clean_cumulative_meter_data()
-                # Just need to calculate daily consumption
+                # Data is already cleaned and sorted at load time by clean_cumulative_meter_data()
+                # Calculate daily consumption: last reading - first reading for each day
                 
-                def calc_daily_energy(group):
-                    """Calculate energy for a day using cumulative readings (last - first)"""
-                    if len(group) < 2:
-                        return 0
-                    group_sorted = group.sort_values('Timestamp')
-                    first_val = group_sorted['Energy_kWh'].iloc[0]
-                    last_val = group_sorted['Energy_kWh'].iloc[-1]
-                    energy = last_val - first_val
-                    return max(0, energy)
+                # Group by date and calculate energy (data already sorted by timestamp)
+                daily_stats = []
+                for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
+                    if len(group) >= 2:
+                        # Data is already sorted by timestamp from loading
+                        first_energy = group['Energy_kWh'].iloc[0]
+                        last_energy = group['Energy_kWh'].iloc[-1]
+                        energy = max(0, last_energy - first_energy)
+                    else:
+                        energy = 0
+                    peak_kw = group['kW_Total'].max()
+                    daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
                 
-                daily = df.groupby(pd.to_datetime(df['Date']).dt.date).agg({
-                    'Energy_kWh': calc_daily_energy,
-                    'kW_Total': 'max'
-                }).reset_index()
-                daily.columns = ['Date', 'Energy_kWh', 'Peak_kW']
+                daily = pd.DataFrame(daily_stats)
                 
-                # Filter out only unrealistic values (keep 0 kWh days - server might be down)
-                daily = daily[daily['Energy_kWh'] < 2000]  # Max 2000 kWh/day is reasonable
-                
-                # Add day of week info for coloring
-                daily['Date'] = pd.to_datetime(daily['Date'])
-                daily['DayOfWeek'] = daily['Date'].dt.dayofweek  # 0=Mon, 6=Sun
-                daily['DayName'] = daily['Date'].dt.strftime('%a')  # Mon, Tue, etc.
-                daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])  # Sat=5, Sun=6
-                daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
-                
-                # Create bar chart with weekend/weekday colors
-                fig = px.bar(daily, x='Date', y='Energy_kWh', 
-                            color='DayType',
-                            color_discrete_map={
-                                '🟢 Weekday': '#4ecdc4',
-                                '🔵 Weekend': '#ff6b6b'
-                            },
-                            title='Daily Energy Consumption (Weekday vs Weekend)',
-                            hover_data={'DayName': True, 'Peak_kW': ':.1f', 'Energy_kWh': ':.1f'})
-                
-                fig.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)', 
-                    plot_bgcolor='rgba(21,29,40,1)',
-                    font_color='#8899a6', 
-                    title_font_color='#f0f4f8',
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
+                if len(daily) == 0:
+                    st.warning("No daily data available")
+                else:
+                    # Filter out only unrealistic values (keep 0 kWh days - server might be down)
+                    daily = daily[daily['Energy_kWh'] < 2000]  # Max 2000 kWh/day is reasonable
+                    
+                    # Add day of week info for coloring
+                    daily['Date'] = pd.to_datetime(daily['Date'])
+                    daily['DayOfWeek'] = daily['Date'].dt.dayofweek  # 0=Mon, 6=Sun
+                    daily['DayName'] = daily['Date'].dt.strftime('%a')  # Mon, Tue, etc.
+                    daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])  # Sat=5, Sun=6
+                    daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
+                    
+                    # Create bar chart with weekend/weekday colors
+                    fig = px.bar(daily, x='Date', y='Energy_kWh', 
+                                color='DayType',
+                                color_discrete_map={
+                                    '🟢 Weekday': '#4ecdc4',
+                                    '🔵 Weekend': '#ff6b6b'
+                                },
+                                title='Daily Energy Consumption (Weekday vs Weekend)',
+                                hover_data={'DayName': True, 'Peak_kW': ':.1f', 'Energy_kWh': ':.1f'})
+                    
+                    fig.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        plot_bgcolor='rgba(21,29,40,1)',
+                        font_color='#8899a6', 
+                        title_font_color='#f0f4f8',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
                     )
-                )
-                fig.update_xaxes(gridcolor='#253040', tickformat='%b %d\n%a')
-                fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
-                
-                # Add weekend shading
-                for _, row in daily[daily['IsWeekend']].iterrows():
-                    fig.add_vrect(
-                        x0=row['Date'] - pd.Timedelta(hours=12),
-                        x1=row['Date'] + pd.Timedelta(hours=12),
-                        fillcolor="rgba(17, 138, 178, 0.1)",
-                        layer="below",
-                        line_width=0,
-                    )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Show weekday vs weekend summary
-                weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
-                weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Weekday Avg", f"{weekday_avg:.1f} kWh")
-                with col2:
-                    st.metric("Weekend Avg", f"{weekend_avg:.1f} kWh")
-                with col3:
-                    diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
-                    st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
+                    fig.update_xaxes(gridcolor='#253040', tickformat='%b %d\n%a')
+                    fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
+                    
+                    # Add weekend shading
+                    for _, row in daily[daily['IsWeekend']].iterrows():
+                        fig.add_vrect(
+                            x0=row['Date'] - pd.Timedelta(hours=12),
+                            x1=row['Date'] + pd.Timedelta(hours=12),
+                            fillcolor="rgba(17, 138, 178, 0.1)",
+                            layer="below",
+                            line_width=0,
+                        )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show weekday vs weekend summary
+                    weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
+                    weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Weekday Avg", f"{weekday_avg:.1f} kWh")
+                    with col2:
+                        st.metric("Weekend Avg", f"{weekend_avg:.1f} kWh")
+                    with col3:
+                        diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
+                        st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
                 
                 # Cumulative Energy Meter Reading Chart
                 st.markdown("---")
