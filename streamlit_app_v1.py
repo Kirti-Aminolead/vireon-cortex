@@ -613,6 +613,46 @@ def calculate_kpis(df):
         except Exception:
             pass
     
+    # ToD Energy Breakdown (for savings calculation)
+    kpis['energy_peak'] = kpis['energy_normal'] = kpis['energy_offpeak'] = 0
+    if 'ToD_Period' in df.columns and 'Energy_kWh' in df.columns:
+        try:
+            df_tod = df.copy()
+            df_tod['ToD_Normalized'] = df_tod['ToD_Period'].str.upper().str.replace('-', '').str.strip()
+            df_tod = df_tod.sort_values('Timestamp')
+            
+            for period in ['PEAK', 'NORMAL', 'OFFPEAK']:
+                df_period = df_tod[df_tod['ToD_Normalized'] == period]
+                if len(df_period) >= 2:
+                    # Calculate energy per period (last - first for each day, summed)
+                    period_energy = 0
+                    for date, group in df_period.groupby(df_period['Timestamp'].dt.date):
+                        if len(group) >= 2:
+                            first_e = group['Energy_kWh'].iloc[0]
+                            last_e = group['Energy_kWh'].iloc[-1]
+                            period_energy += max(0, last_e - first_e)
+                    
+                    if period == 'PEAK':
+                        kpis['energy_peak'] = period_energy
+                    elif period == 'NORMAL':
+                        kpis['energy_normal'] = period_energy
+                    else:
+                        kpis['energy_offpeak'] = period_energy
+        except Exception:
+            pass
+    
+    # Contracted demand (from your setup - 200 kW)
+    kpis['contracted_demand'] = 200  # kW
+    
+    # Number of days in data (for monthly projections)
+    if 'Timestamp' in df.columns:
+        try:
+            kpis['data_days'] = (df['Timestamp'].max() - df['Timestamp'].min()).days + 1
+        except:
+            kpis['data_days'] = 1
+    else:
+        kpis['data_days'] = 1
+    
     return kpis
 
 
@@ -1838,33 +1878,33 @@ def main():
                             <span class="kpi-value" style="color: #ffd166">{kpis['neutral_risk']} ({kpis['neutral_risk']/max(fire_total,1)*100:.1f}%)</span>
                         </div>
                     </div>
-                    <div style="flex: 1; min-width: 200px;">
-                        <div class="risk-grid">
-                            <div class="risk-item normal">
-                                <div class="risk-level" style="color: #06d6a0">Safe</div>
-                                <div class="risk-count" style="color: #06d6a0">{kpis['fire_normal']}</div>
-                                <div class="risk-pct">{kpis['fire_normal']/max(fire_total,1)*100:.1f}%</div>
-                            </div>
-                            <div class="risk-item warning">
-                                <div class="risk-level" style="color: #ffd166">Watch</div>
-                                <div class="risk-count" style="color: #ffd166">{kpis['fire_warning']}</div>
-                                <div class="risk-pct">{kpis['fire_warning']/max(fire_total,1)*100:.1f}%</div>
-                            </div>
-                            <div class="risk-item high">
-                                <div class="risk-level" style="color: #f77f00">High</div>
-                                <div class="risk-count" style="color: #f77f00">{kpis['fire_high']}</div>
-                                <div class="risk-pct">{kpis['fire_high']/max(fire_total,1)*100:.1f}%</div>
-                            </div>
-                            <div class="risk-item critical">
-                                <div class="risk-level" style="color: #ef476f">Critical</div>
-                                <div class="risk-count" style="color: #ef476f">{kpis['fire_critical']}</div>
-                                <div class="risk-pct">{kpis['fire_critical']/max(fire_total,1)*100:.1f}%</div>
-                            </div>
+                </div>
+                <div style="margin-top: 16px;">
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+                        <div style="background: rgba(6, 214, 160, 0.1); border: 1px solid #06d6a0; border-radius: 8px; padding: 12px; text-align: center;">
+                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #06d6a0; margin-bottom: 4px;">✓ Safe</div>
+                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #06d6a0;">{kpis['fire_normal']}</div>
+                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_normal']/max(fire_total,1)*100:.1f}%</div>
+                        </div>
+                        <div style="background: rgba(255, 209, 102, 0.1); border: 1px solid #ffd166; border-radius: 8px; padding: 12px; text-align: center;">
+                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #ffd166; margin-bottom: 4px;">⚡ Watch</div>
+                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #ffd166;">{kpis['fire_warning']}</div>
+                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_warning']/max(fire_total,1)*100:.1f}%</div>
+                        </div>
+                        <div style="background: rgba(247, 127, 0, 0.1); border: 1px solid #f77f00; border-radius: 8px; padding: 12px; text-align: center;">
+                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #f77f00; margin-bottom: 4px;">🔥 High</div>
+                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #f77f00;">{kpis['fire_high']}</div>
+                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_high']/max(fire_total,1)*100:.1f}%</div>
+                        </div>
+                        <div style="background: rgba(239, 71, 111, 0.15); border: 2px solid #ef476f; border-radius: 8px; padding: 12px; text-align: center;">
+                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #ef476f; margin-bottom: 4px;">🚨 CRITICAL</div>
+                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #ef476f;">{kpis['fire_critical']}</div>
+                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_critical']/max(fire_total,1)*100:.1f}%</div>
                         </div>
                     </div>
                 </div>
                 <div class="kpi-insight">
-                    {"✓ Fire risk under control." if kpis['fire_critical'] == 0 else f"⚠️ {kpis['fire_critical']} critical events. Inspect wiring."}
+                    {"✓ Fire risk under control. All systems normal." if kpis['fire_critical'] == 0 else f"🚨 {kpis['fire_critical']} CRITICAL events detected! Immediate inspection required."}
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -2032,22 +2072,78 @@ def main():
                 st.caption("Data cleaned at load: invalid readings (meter decreases, unrealistic jumps) already removed")
                 
                 if len(df) > 0:
+                    # Prepare data with daily consumption calculation
+                    df_chart = df[['Timestamp', 'Energy_kWh', 'Location']].copy()
+                    df_chart = df_chart.sort_values('Timestamp')
+                    df_chart['Date'] = df_chart['Timestamp'].dt.date
+                    df_chart['Week'] = df_chart['Timestamp'].dt.isocalendar().week
+                    df_chart['DayName'] = df_chart['Timestamp'].dt.strftime('%a')
+                    
                     fig_cumulative = px.line(
-                        df, 
+                        df_chart, 
                         x='Timestamp', 
                         y='Energy_kWh',
-                        color='Location' if 'Location' in df.columns and df['Location'].nunique() > 1 else None,
+                        color='Location' if 'Location' in df_chart.columns and df_chart['Location'].nunique() > 1 else None,
                         title='Cumulative Energy Meter Reading Over Time',
                         markers=False
                     )
+                    
+                    # Add week boundary vertical lines
+                    weeks = df_chart.groupby('Week')['Timestamp'].min().reset_index()
+                    for _, week_row in weeks.iterrows():
+                        fig_cumulative.add_vline(
+                            x=week_row['Timestamp'],
+                            line_dash="dot",
+                            line_color="#253040",
+                            line_width=1,
+                            annotation_text=f"W{week_row['Week']}",
+                            annotation_position="top",
+                            annotation_font_size=9,
+                            annotation_font_color="#8899a6"
+                        )
+                    
+                    # Calculate daily consumption and find high consumption days
+                    if len(daily) > 0:
+                        avg_consumption = daily['Energy_kWh'].mean()
+                        std_consumption = daily['Energy_kWh'].std() if len(daily) > 1 else 0
+                        threshold = avg_consumption + std_consumption  # Days above avg + 1 std dev
+                        
+                        high_days = daily[daily['Energy_kWh'] > threshold]
+                        
+                        # Add annotations for high consumption days
+                        for _, high_day in high_days.iterrows():
+                            # Find the corresponding meter reading at end of that day
+                            day_data = df_chart[df_chart['Date'] == high_day['Date'].date()]
+                            if len(day_data) > 0:
+                                day_end = day_data.iloc[-1]
+                                fig_cumulative.add_annotation(
+                                    x=day_end['Timestamp'],
+                                    y=day_end['Energy_kWh'],
+                                    text=f"⚡{high_day['Energy_kWh']:.0f}kWh",
+                                    showarrow=True,
+                                    arrowhead=2,
+                                    arrowsize=1,
+                                    arrowcolor="#ef476f",
+                                    font=dict(size=9, color="#ef476f"),
+                                    bgcolor="rgba(239, 71, 111, 0.1)",
+                                    bordercolor="#ef476f",
+                                    borderwidth=1,
+                                    borderpad=2
+                                )
+                    
                     fig_cumulative.update_layout(
                         paper_bgcolor='rgba(0,0,0,0)', 
                         plot_bgcolor='rgba(21,29,40,1)',
                         font_color='#8899a6', 
                         title_font_color='#f0f4f8',
-                        hovermode='x unified'
+                        hovermode='x unified',
+                        xaxis=dict(
+                            tickformat='%b %d\n%a',
+                            dtick=86400000 * 7,  # Weekly ticks
+                            ticklabelmode='period'
+                        )
                     )
-                    fig_cumulative.update_xaxes(gridcolor='#253040')
+                    fig_cumulative.update_xaxes(gridcolor='#253040', title='Date')
                     fig_cumulative.update_yaxes(gridcolor='#253040', title='Meter Reading (kWh)')
                     fig_cumulative.update_traces(line=dict(width=2))
                     
@@ -2419,59 +2515,127 @@ def main():
                         </div>
                     """, unsafe_allow_html=True)
     
-    # ============= SAVINGS BANNER (Dynamic Calculation) =============
-    # Calculate actual savings potential based on KPIs
+    # ============= SAVINGS BANNER (Data-Driven Calculation) =============
+    # Calculate actual savings potential based on WBSEDCL HT Industrial Tariff
+    
     savings_breakdown = []
     total_savings = 0
     
-    # 1. Demand Contract Savings (if underutilized)
-    load_avg = kpis.get('load_avg', 0)
-    load_max = kpis.get('load_max', 0)
-    contracted_demand = 200  # Assumed kW
-    if load_avg > 0 and load_max < 50:
-        # Can reduce contract by 50%
-        demand_savings = int(4000 * (1 - load_max/100))
-        savings_breakdown.append(f"Demand contract (₹{demand_savings:,})")
-        total_savings += demand_savings
-    elif load_max < 75:
-        demand_savings = 2000
-        savings_breakdown.append(f"Demand contract (₹{demand_savings:,})")
-        total_savings += demand_savings
+    # Get key metrics
+    contracted_demand = kpis.get('contracted_demand', 200)  # kW
+    peak_demand = kpis.get('peak_demand', 0)  # Actual max kW used
+    load_max = kpis.get('load_max', 0)  # % of contracted demand
+    avg_pf = kpis.get('avg_pf', 0.95)
+    data_days = kpis.get('data_days', 30)
     
-    # 2. PF Optimization Savings
-    pf_avg = kpis.get('avg_pf', 1)
-    pf_below_92 = kpis.get('pf_below_92', 0)
-    if pf_avg < 0.92:
-        # Penalty is roughly (0.92 - PF) * 2% per 0.01 shortfall
-        pf_penalty_rate = (0.92 - pf_avg) * 100 * 50  # ~₹50 per 0.01 shortfall
-        pf_savings = int(min(15000, max(2500, pf_penalty_rate)))
-        savings_breakdown.append(f"PF optimization (₹{pf_savings:,})")
-        total_savings += pf_savings
-    elif pf_below_92 > 10:
-        pf_savings = 1500
-        savings_breakdown.append(f"PF optimization (₹{pf_savings:,})")
-        total_savings += pf_savings
+    # ToD energy breakdown
+    energy_peak = kpis.get('energy_peak', 0)
+    energy_normal = kpis.get('energy_normal', 0) 
+    energy_offpeak = kpis.get('energy_offpeak', 0)
+    total_energy = kpis.get('total_energy', 0)
     
-    # 3. ToD Shift Savings (if peak usage is high)
-    # Estimate based on potential shift from peak to off-peak
-    tod_savings = 1500  # Base estimate
-    savings_breakdown.append(f"ToD shift (₹{tod_savings:,})")
-    total_savings += tod_savings
+    # WBSEDCL HT Industrial Tariff Rates
+    DEMAND_CHARGE = 350  # ₹/kVA/month
+    RATE_PEAK = 8.37     # ₹/kWh (5PM-11PM)
+    RATE_NORMAL = 6.87   # ₹/kWh (6AM-5PM)
+    RATE_OFFPEAK = 5.18  # ₹/kWh (11PM-6AM)
+    PF_BENCHMARK = 0.92  # Below this = penalty
     
-    # 4. Fire Prevention (always include)
-    savings_breakdown.append("Fire prevention (Priceless)")
+    # Scale to monthly (30 days)
+    monthly_factor = 30 / max(data_days, 1)
     
-    # Ensure minimum display
-    if total_savings < 5000:
-        total_savings = 10000
+    # ============= 1. DEMAND CONTRACT OPTIMIZATION =============
+    # If actual peak demand is much lower than contracted, can reduce contract
+    if peak_demand > 0 and contracted_demand > 0:
+        utilization = (peak_demand / contracted_demand) * 100
+        
+        # Optimal contract = peak demand + 20% buffer
+        optimal_contract = peak_demand * 1.2
+        
+        if optimal_contract < contracted_demand * 0.8:  # Can reduce by >20%
+            # Savings = (Current - Optimal) * Demand Charge
+            # Assuming PF of 0.9, kVA = kW / 0.9
+            current_kva = contracted_demand / 0.9
+            optimal_kva = optimal_contract / 0.9
+            demand_savings = int((current_kva - optimal_kva) * DEMAND_CHARGE)
+            
+            if demand_savings > 0:
+                reduction_pct = ((contracted_demand - optimal_contract) / contracted_demand) * 100
+                savings_breakdown.append(f"Demand contract (₹{demand_savings:,}/mo) - reduce {reduction_pct:.0f}% to {optimal_contract:.0f}kW")
+                total_savings += demand_savings
     
-    savings_text = " + ".join(savings_breakdown)
+    # ============= 2. POWER FACTOR OPTIMIZATION =============
+    # WBSEDCL penalty: 1% of energy bill for every 0.01 below 0.92
+    if avg_pf > 0 and avg_pf < PF_BENCHMARK:
+        # Calculate current energy cost
+        monthly_energy = total_energy * monthly_factor
+        if monthly_energy == 0:
+            monthly_energy = 5000  # Estimate if no data
+        
+        avg_rate = 6.50  # Blended rate estimate
+        monthly_energy_bill = monthly_energy * avg_rate
+        
+        # Penalty calculation
+        pf_shortfall = PF_BENCHMARK - avg_pf  # e.g., 0.92 - 0.85 = 0.07
+        penalty_pct = pf_shortfall * 100  # 7%
+        pf_penalty = monthly_energy_bill * (penalty_pct / 100)
+        pf_savings = int(pf_penalty)
+        
+        if pf_savings > 100:
+            savings_breakdown.append(f"PF penalty avoided (₹{pf_savings:,}/mo) - improve from {avg_pf:.2f} to 0.92")
+            total_savings += pf_savings
+    
+    # ============= 3. ToD SHIFT OPTIMIZATION =============
+    # Calculate savings if peak energy is shifted to off-peak
+    if energy_peak > 0:
+        # Project to monthly
+        monthly_peak = energy_peak * monthly_factor
+        
+        # Potential savings = Peak energy × (Peak rate - Offpeak rate)
+        rate_diff = RATE_PEAK - RATE_OFFPEAK  # 8.37 - 5.18 = 3.19
+        
+        # Assume 50% of peak can realistically be shifted
+        shiftable_energy = monthly_peak * 0.5
+        tod_savings = int(shiftable_energy * rate_diff)
+        
+        if tod_savings > 100:
+            savings_breakdown.append(f"ToD optimization (₹{tod_savings:,}/mo) - shift {shiftable_energy:.0f}kWh from peak")
+            total_savings += tod_savings
+    elif total_energy > 0:
+        # Estimate if no ToD data
+        monthly_energy = total_energy * monthly_factor
+        # Assume 20% is peak, 50% shiftable
+        estimated_peak = monthly_energy * 0.2
+        shiftable = estimated_peak * 0.5
+        tod_savings = int(shiftable * (RATE_PEAK - RATE_OFFPEAK))
+        if tod_savings > 100:
+            savings_breakdown.append(f"ToD optimization (₹{tod_savings:,}/mo est.)")
+            total_savings += tod_savings
+    
+    # ============= 4. FIRE PREVENTION VALUE =============
+    fire_high = kpis.get('fire_high', 0)
+    fire_critical = kpis.get('fire_critical', 0)
+    if fire_high > 0 or fire_critical > 0:
+        savings_breakdown.append("⚠️ Fire risk detected - prevention value: Priceless")
+    else:
+        savings_breakdown.append("✅ Fire monitoring active")
+    
+    # Build display - Apply 50% conservative discount for realistic expectations
+    realizable_savings = int(total_savings * 0.5)
+    
+    if realizable_savings == 0:
+        savings_value_html = f'<div class="savings-value" style="font-size: 28px;">Analyzing...</div>'
+    else:
+        savings_value_html = f'<div class="savings-value">₹{realizable_savings:,}+</div>'
+    
+    savings_text = "<br>".join(savings_breakdown) if savings_breakdown else "Analyzing your data..."
     
     st.markdown(f"""
         <div class="savings-banner">
-            <div class="savings-label">💰 Total Monthly Savings Potential</div>
-            <div class="savings-value">₹{total_savings:,}+</div>
-            <div class="savings-subtext">{savings_text}</div>
+            <div class="savings-label">💰 Monthly Savings Potential (Conservative Estimate)</div>
+            {savings_value_html}
+            <div class="savings-subtext" style="text-align: left; font-size: 11px; line-height: 1.6;">{savings_text}</div>
+            <div style="font-size: 9px; color: #5c6b7a; margin-top: 8px;">Based on {data_days} days of data | 50% realization factor applied | WBSEDCL HT Industrial Tariff</div>
         </div>
     """, unsafe_allow_html=True)
     
