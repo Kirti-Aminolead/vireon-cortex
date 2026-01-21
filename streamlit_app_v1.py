@@ -20,9 +20,16 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 from io import StringIO
+
+# IST Timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_ist_now():
+    """Get current time in IST"""
+    return datetime.now(IST).replace(tzinfo=None)
 
 # ============= PAGE CONFIG =============
 st.set_page_config(
@@ -452,7 +459,7 @@ def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
 
 def get_tod_period():
     """Get current ToD period"""
-    hour = datetime.now().hour
+    hour = get_ist_now().hour
     if 6 <= hour < 17:
         return "NORMAL", "tod-normal"
     elif 17 <= hour < 23:
@@ -555,29 +562,31 @@ def calculate_kpis(df):
         except Exception:
             pass
     
-    # ToD Energy Breakdown (for savings calculation)
+    # ToD Energy Breakdown - use proportion of readings in each period
+    # Since meter resets make diff unreliable across ToD boundaries
     kpis['energy_peak'] = kpis['energy_normal'] = kpis['energy_offpeak'] = 0
-    if 'ToD_Period' in df.columns and 'Energy_kWh' in df.columns:
+    if 'ToD_Period' in df.columns and kpis['total_energy'] > 0:
         try:
             df_tod = df.copy()
-            # Normalize ToD: OFF-PEAK and OFFPEAK both become OFFPEAK
             df_tod['ToD_Normalized'] = df_tod['ToD_Period'].str.upper().str.replace('-', '').str.strip()
-            df_tod = df_tod.sort_values('Timestamp')
             
-            for period in ['PEAK', 'NORMAL', 'OFFPEAK']:
-                df_period = df_tod[df_tod['ToD_Normalized'] == period].copy()
-                if len(df_period) >= 2:
-                    # Use diff method - sum positive increments only
-                    df_period = df_period.sort_values('Timestamp')
-                    energy_diff = df_period['Energy_kWh'].diff()
-                    period_energy = energy_diff.apply(lambda x: x if (pd.notna(x) and 0 < x < 500) else 0).sum()
-                    
-                    if period == 'PEAK':
-                        kpis['energy_peak'] = period_energy
-                    elif period == 'NORMAL':
-                        kpis['energy_normal'] = period_energy
-                    else:
-                        kpis['energy_offpeak'] = period_energy
+            # Count readings per period
+            tod_counts = df_tod['ToD_Normalized'].value_counts()
+            total_readings = tod_counts.sum()
+            
+            if total_readings > 0:
+                # Distribute energy proportionally based on reading counts
+                for period in ['PEAK', 'NORMAL', 'OFFPEAK']:
+                    if period in tod_counts.index:
+                        proportion = tod_counts[period] / total_readings
+                        period_energy = kpis['total_energy'] * proportion
+                        
+                        if period == 'PEAK':
+                            kpis['energy_peak'] = period_energy
+                        elif period == 'NORMAL':
+                            kpis['energy_normal'] = period_energy
+                        else:
+                            kpis['energy_offpeak'] = period_energy
         except Exception:
             pass
     
@@ -1427,10 +1436,10 @@ def main():
         # Apply report date filter (only if Timestamp exists)
         if 'Timestamp' in report_df.columns:
             if report_type == "Weekly Report":
-                cutoff = pd.Timestamp.now() - pd.Timedelta(days=7)
+                cutoff = pd.Timestamp(get_ist_now()) - pd.Timedelta(days=7)
                 report_df = report_df[report_df['Timestamp'] >= cutoff]
             elif report_type == "Monthly Report":
-                cutoff = pd.Timestamp.now() - pd.Timedelta(days=30)
+                cutoff = pd.Timestamp(get_ist_now()) - pd.Timedelta(days=30)
                 report_df = report_df[report_df['Timestamp'] >= cutoff]
             elif report_type == "Custom Range":
                 if report_start and report_end:
@@ -1474,7 +1483,7 @@ def main():
     # If All Sheds, show quick comparison first
     if shed_filter == "All Sheds (Overview)":
         # Current date/time display
-        current_datetime = datetime.now()
+        current_datetime = get_ist_now()
         st.markdown(f"""
             <div class="section-header">
                 <span class="section-icon">🏭</span>
@@ -1513,7 +1522,7 @@ def main():
                     if pd.notna(last_ts):
                         last_reading_str = last_ts.strftime('%Y-%m-%d %H:%M:%S')
                         time_ago = (current_datetime - last_ts.to_pydatetime().replace(tzinfo=None))
-                        mins_ago = time_ago.total_seconds() / 60
+                        mins_ago = abs(time_ago.total_seconds() / 60)  # Use abs to handle future timestamps
                         if mins_ago < 10:
                             status_icon = "🟢"
                             status_text = f"{mins_ago:.0f} min ago"
@@ -2301,9 +2310,9 @@ def main():
                     total_readings = len(df_loc)
                     
                     # Time since last reading
-                    now = pd.Timestamp.now()
+                    now = pd.Timestamp(get_ist_now())
                     time_since_last = now - last_reading
-                    minutes_ago = time_since_last.total_seconds() / 60
+                    minutes_ago = abs(time_since_last.total_seconds() / 60)  # Use abs for future timestamps
                     
                     # Determine status
                     if minutes_ago <= 10:
@@ -2526,7 +2535,7 @@ def main():
     # Refresh section
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        st.markdown(f"<p style='text-align: center; color: #5c6b7a; font-size: 10px;'>Last refresh: {datetime.now().strftime('%H:%M:%S')}</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #5c6b7a; font-size: 10px;'>Last refresh: {get_ist_now().strftime('%H:%M:%S')} IST</p>", unsafe_allow_html=True)
     with col2:
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.cache_data.clear()
