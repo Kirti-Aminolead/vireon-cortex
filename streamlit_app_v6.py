@@ -3608,10 +3608,10 @@ def main():
                     first_reading = df_loc['Timestamp'].min()
                     total_readings = len(df_loc)
                     
-                    # Time since last reading
-                    now = pd.Timestamp.now()
+                    # Time since last reading - use IST timezone
+                    now = pd.Timestamp(get_ist_now())
                     time_since_last = now - last_reading
-                    minutes_ago = time_since_last.total_seconds() / 60
+                    minutes_ago = max(0, time_since_last.total_seconds() / 60)  # Ensure non-negative
                     
                     # Determine status
                     if minutes_ago <= 10:
