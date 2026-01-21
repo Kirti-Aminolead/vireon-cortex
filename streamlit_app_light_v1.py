@@ -525,16 +525,57 @@ def calculate_kpis(df):
         except Exception:
             pass
     
-    # PF penalty
+    # PF penalty - with noise filtering and sustained alert detection
     kpis['pf_below_92'] = kpis['pf_below_85'] = kpis['pf_min'] = 0
+    kpis['pf_below_90'] = 0
+    kpis['pf_sustained_alerts'] = 0  # Count of sustained low PF events (3+ consecutive)
+    kpis['pf_sustained_minutes'] = 0  # Total minutes in sustained low PF
+    kpis['pf_valid_readings'] = 0  # Readings with sufficient current
+    
     if 'PF_Avg' in df.columns and n > 0:
         try:
-            pf_series = pd.to_numeric(df['PF_Avg'], errors='coerce').abs()
-            pf_series = pf_series.replace([np.inf, -np.inf], np.nan).dropna()
-            if len(pf_series) > 0:
-                kpis['pf_below_92'] = (pf_series < 0.92).sum() / len(pf_series) * 100
-                kpis['pf_below_85'] = (pf_series < 0.85).sum() / len(pf_series) * 100
-                kpis['pf_min'] = pf_series.min()
+            # Create working copy for PF analysis
+            df_pf = df.copy()
+            df_pf['PF_Abs'] = pd.to_numeric(df_pf['PF_Avg'], errors='coerce').abs()
+            
+            # Filter out noisy data: require Current > 1A for valid PF reading
+            # This excludes startup transients and idle states
+            if 'Current_Total' in df_pf.columns:
+                current_series = pd.to_numeric(df_pf['Current_Total'], errors='coerce')
+                valid_mask = (current_series > 1.0) & (df_pf['PF_Abs'].notna())
+            else:
+                valid_mask = df_pf['PF_Abs'].notna()
+            
+            df_pf_valid = df_pf[valid_mask].copy()
+            kpis['pf_valid_readings'] = len(df_pf_valid)
+            
+            if len(df_pf_valid) > 0:
+                pf_series = df_pf_valid['PF_Abs']
+                pf_series = pf_series.replace([np.inf, -np.inf], np.nan).dropna()
+                
+                if len(pf_series) > 0:
+                    kpis['pf_below_92'] = (pf_series < 0.92).sum() / len(pf_series) * 100
+                    kpis['pf_below_90'] = (pf_series < 0.90).sum() / len(pf_series) * 100
+                    kpis['pf_below_85'] = (pf_series < 0.85).sum() / len(pf_series) * 100
+                    kpis['pf_min'] = pf_series.min()
+                
+                # Detect sustained low PF (3+ consecutive readings below 0.90)
+                # This indicates real PF issues, not transient startup dips
+                df_pf_valid = df_pf_valid.sort_values('Timestamp').reset_index(drop=True)
+                df_pf_valid['PF_Low_90'] = df_pf_valid['PF_Abs'] < 0.90
+                df_pf_valid['PF_Low_92'] = df_pf_valid['PF_Abs'] < 0.92
+                
+                # Group consecutive low PF readings
+                df_pf_valid['PF_Low_Group'] = (df_pf_valid['PF_Low_90'] != df_pf_valid['PF_Low_90'].shift()).cumsum()
+                
+                # Count sustained events (3+ consecutive readings = ~15+ min at 5-min intervals)
+                sustained_groups = df_pf_valid[df_pf_valid['PF_Low_90']].groupby('PF_Low_Group').size()
+                sustained_alerts = sustained_groups[sustained_groups >= 3]
+                
+                kpis['pf_sustained_alerts'] = len(sustained_alerts)
+                kpis['pf_sustained_readings'] = sustained_alerts.sum() if len(sustained_alerts) > 0 else 0
+                kpis['pf_sustained_minutes'] = kpis['pf_sustained_readings'] * 5  # Assuming 5-min intervals
+                
         except Exception:
             pass
     
@@ -1104,7 +1145,7 @@ def main():
         with st.expander("📚 Help & Documentation", expanded=False):
             help_section = st.radio(
                 "Select Guide",
-                options=["CXO Guide", "Technical Manual", "FAQ"],
+                options=["CXO Guide", "Asset Health", "Technical Manual", "FAQ"],
                 index=0,
                 label_visibility="collapsed"
             )
@@ -1129,6 +1170,78 @@ def main():
                 - Off-peak (11PM-6AM): ₹5.18/kWh
                 - Normal (6AM-5PM): ₹6.87/kWh
                 - Peak (5PM-11PM): ₹8.37/kWh
+                """)
+            
+            elif help_section == "Asset Health":
+                st.markdown("""
+                **🏭 Asset Health Metrics Guide**
+                
+                ---
+                
+                **⚡ Power Quality**
+                
+                | Metric | Calculation | Threshold |
+                |--------|-------------|-----------|
+                | Supply Stability | Voltage deviation from 415V nominal | < 5% good |
+                | Worst Recorded | Max voltage unbalance % | < 2% good |
+                | Warning Events | Count of readings with unbalance > 2% | Minimize |
+                
+                *Purpose: Monitors incoming supply quality for equipment protection and warranty claims.*
+                
+                ---
+                
+                **🔧 Motor Health**
+                
+                | Metric | Calculation | Threshold |
+                |--------|-------------|-----------|
+                | Load Balance | Current imbalance across R/Y/B phases | < 15% good |
+                | Worst Recorded | Maximum current unbalance % | < 20% good |
+                | Needs Attention | Readings with unbalance > 15% | Investigate |
+                
+                *Purpose: Detects uneven motor loading that causes overheating and premature failure.*
+                
+                ---
+                
+                **📊 Capacity Usage**
+                
+                | Metric | Calculation | Threshold |
+                |--------|-------------|-----------|
+                | Avg Utilization | Mean kW / Contracted kW × 100 | 60-80% optimal |
+                | Peak Usage | Max kW / Contracted kW × 100 | < 90% safe |
+                | Idle Time | % readings with load < 10% | Minimize waste |
+                
+                *Purpose: Identifies over-contracted demand (reduce bill) or under-capacity (add margin).*
+                
+                ---
+                
+                **🔌 Grid Quality**
+                
+                | Metric | Calculation | Threshold |
+                |--------|-------------|-----------|
+                | Frequency | Range of Hz readings | 49.5-50.5 Hz normal |
+                | Voltage Range | Min-Max L-N voltage | 380-440V acceptable |
+                | Status | Fluctuating if variance > threshold | Stable preferred |
+                
+                *Purpose: Documents grid events for warranty claims and equipment protection settings.*
+                
+                ---
+                
+                **⚠️ PF Sustained Alert Logic**
+                
+                **Why filter?** Transient PF dips during motor startup are normal and don't warrant penalties.
+                
+                **Filter criteria:**
+                - Only readings with Current > 1A are considered valid
+                - Excludes startup transients and idle states
+                
+                **Sustained alert definition:**
+                - PF below 0.90 for **3+ consecutive readings** (~15+ minutes)
+                - This indicates a real PF issue, not transient noise
+                
+                **Alert levels:**
+                - 🟢 0 sustained events: Healthy
+                - 🟡 1-3 events: Monitor APFC
+                - 🔴 4+ events: APFC needs service
                 """)
             
             elif help_section == "Technical Manual":
@@ -1171,6 +1284,9 @@ def main():
                 **Q: What's a good PF?**
                 Above 0.92. Below = penalty charges.
                 
+                **Q: Why are some PF readings ignored?**
+                Readings with Current < 1A are excluded to filter motor startup transients.
+                
                 **Q: What causes fire risk alerts?**
                 High neutral current from loose connections or phase imbalance.
                 
@@ -1178,6 +1294,9 @@ def main():
                 1. Keep PF > 0.92
                 2. Shift loads to off-peak
                 3. Right-size contract demand
+                
+                **Q: What is a "sustained" PF alert?**
+                PF below 0.90 for 3+ consecutive readings (~15 min). Brief dips are ignored.
                 
                 **Q: Data not updating?**
                 1. Click Refresh Data
@@ -1848,33 +1967,49 @@ def main():
             </div>
         """, unsafe_allow_html=True)
     
-    # Penalty Alert (simplified from PF Penalty Pre-Alert)
+    # Penalty Alert (with sustained alert detection)
     with cols[1]:
-        pf_status = "status-good" if kpis['pf_below_92'] < 10 else "status-warning" if kpis['pf_below_92'] < 30 else "status-critical"
-        pf_color = "#06d6a0" if kpis['pf_below_92'] < 10 else "#ffd166" if kpis['pf_below_92'] < 30 else "#ef476f"
+        sustained_alerts = kpis.get('pf_sustained_alerts', 0)
+        pf_below_92 = kpis.get('pf_below_92', 0)
+        
+        # Status based on sustained alerts (more meaningful than raw %)
+        if sustained_alerts == 0:
+            pf_status = "status-good"
+            pf_color = "#06d6a0"
+        elif sustained_alerts <= 3:
+            pf_status = "status-warning"
+            pf_color = "#ffd166"
+        else:
+            pf_status = "status-critical"
+            pf_color = "#ef476f"
+        
         st.markdown(f"""
             <div class="kpi-card">
                 <div class="kpi-title">
-                    ⚠️ Penalty Alert
+                    ⚠️ PF Penalty Alert
                     <span class="status-dot {pf_status}"></span>
                 </div>
                 <div class="kpi-metric">
-                    <span class="kpi-label">In Penalty Zone</span>
-                    <span class="kpi-value" style="color: {pf_color}">{kpis['pf_below_92']:.1f}%</span>
+                    <span class="kpi-label">Sustained Low PF Events</span>
+                    <span class="kpi-value" style="color: {pf_color}">{sustained_alerts}</span>
                 </div>
                 <div class="kpi-metric">
-                    <span class="kpi-label">High Penalty Zone</span>
-                    <span class="kpi-value" style="color: #ef4444">{kpis['pf_below_85']:.1f}%</span>
+                    <span class="kpi-label">Time in Low PF (≥15min)</span>
+                    <span class="kpi-value" style="color: {'#ef4444' if kpis.get('pf_sustained_minutes', 0) > 60 else '#ffd166' if kpis.get('pf_sustained_minutes', 0) > 0 else '#06d6a0'}">{kpis.get('pf_sustained_minutes', 0)} min</span>
+                </div>
+                <div class="kpi-metric">
+                    <span class="kpi-label">Below 0.92 (Valid)</span>
+                    <span class="kpi-value">{pf_below_92:.1f}%</span>
                 </div>
                 <div class="kpi-metric">
                     <span class="kpi-label">Lowest PF</span>
-                    <span class="kpi-value" style="color: #ef4444">{kpis['pf_min']:.2f}</span>
+                    <span class="kpi-value" style="color: {'#ef4444' if kpis['pf_min'] < 0.85 else '#ffd166' if kpis['pf_min'] < 0.92 else '#06d6a0'}">{kpis['pf_min']:.2f}</span>
                 </div>
                 <div class="kpi-bar">
-                    <div class="kpi-bar-fill" style="width: {kpis['pf_below_92']}%; background: {pf_color};"></div>
+                    <div class="kpi-bar-fill" style="width: {min(100, sustained_alerts * 20)}%; background: {pf_color};"></div>
                 </div>
                 <div class="kpi-insight">
-                    {"✓ No penalty risk." if kpis['pf_below_92'] < 10 else "💸 Penalty exposure. Fix APFC."}
+                    {"✓ No sustained PF issues. Transients filtered." if sustained_alerts == 0 else f"⚠️ {sustained_alerts} sustained events ({kpis.get('pf_sustained_minutes', 0)} min). Check APFC."}
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -1923,20 +2058,54 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                # Calculate daily consumption: last reading - first reading for each day
+                # Calculate daily consumption: group by Date AND Location to handle multiple meters
+                # Each meter has different cumulative readings, so we must calculate per-meter first
                 daily_stats = []
-                for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
-                    group_sorted = group.sort_values('Timestamp')
-                    if len(group_sorted) >= 2:
-                        first_energy = group_sorted['Energy_kWh'].iloc[0]
-                        last_energy = group_sorted['Energy_kWh'].iloc[-1]
-                        energy = max(0, last_energy - first_energy)
-                    else:
-                        energy = 0
-                    peak_kw = group_sorted['kW_Total'].max()
-                    daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
                 
-                daily = pd.DataFrame(daily_stats)
+                # Check if multiple locations exist
+                has_multiple_locations = 'Location' in df.columns and df['Location'].nunique() > 1
+                
+                if has_multiple_locations:
+                    # Group by both Date and Location, then sum across locations
+                    for (date, location), group in df.groupby([pd.to_datetime(df['Date']).dt.date, 'Location']):
+                        group_sorted = group.sort_values('Timestamp')
+                        if len(group_sorted) >= 2:
+                            first_energy = group_sorted['Energy_kWh'].iloc[0]
+                            last_energy = group_sorted['Energy_kWh'].iloc[-1]
+                            energy = last_energy - first_energy
+                            if energy < 0:  # Handle meter reset
+                                diffs = group_sorted['Energy_kWh'].diff()
+                                energy = diffs[diffs > 0].sum()
+                            energy = max(0, energy)
+                        else:
+                            energy = 0
+                        peak_kw = group_sorted['kW_Total'].max()
+                        daily_stats.append({'Date': date, 'Location': location, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
+                    
+                    # Sum energy across locations for each date
+                    daily_by_loc = pd.DataFrame(daily_stats)
+                    daily = daily_by_loc.groupby('Date').agg({
+                        'Energy_kWh': 'sum',
+                        'Peak_kW': 'max'
+                    }).reset_index()
+                else:
+                    # Single location - original logic
+                    for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
+                        group_sorted = group.sort_values('Timestamp')
+                        if len(group_sorted) >= 2:
+                            first_energy = group_sorted['Energy_kWh'].iloc[0]
+                            last_energy = group_sorted['Energy_kWh'].iloc[-1]
+                            energy = last_energy - first_energy
+                            if energy < 0:  # Handle meter reset
+                                diffs = group_sorted['Energy_kWh'].diff()
+                                energy = diffs[diffs > 0].sum()
+                            energy = max(0, energy)
+                        else:
+                            energy = 0
+                        peak_kw = group_sorted['kW_Total'].max()
+                        daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
+                    
+                    daily = pd.DataFrame(daily_stats)
                 
                 if len(daily) == 0:
                     st.warning("No daily data available")
@@ -1947,13 +2116,65 @@ def main():
                     daily['DayName'] = daily['Date'].dt.strftime('%a')
                     daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])
                     daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
+                    daily['IsEstimated'] = False  # Mark real data
                     
-                    fig = px.bar(daily, x='Date', y='Energy_kWh', 
+                    # Calculate day-type averages for estimation (from real data only)
+                    weekday_avg_real = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
+                    weekend_avg_real = daily[daily['IsWeekend']]['Energy_kWh'].mean()
+                    
+                    # Detect missing days
+                    min_date = daily['Date'].min()
+                    max_date = daily['Date'].max()
+                    all_dates = pd.date_range(start=min_date, end=max_date, freq='D')
+                    actual_dates = set(daily['Date'].dt.date)
+                    missing_dates = [d for d in all_dates if d.date() not in actual_dates]
+                    
+                    # Toggle for estimated gaps (OFF by default)
+                    show_estimates = st.checkbox(
+                        f"📊 Show estimated gaps ({len(missing_dates)} days missing)", 
+                        value=False,
+                        help="Visual overlay only - does NOT affect KPIs or calculations"
+                    )
+                    
+                    # Create display dataframe (for chart only)
+                    display_daily = daily.copy()
+                    estimated_total = 0
+                    
+                    if show_estimates and len(missing_dates) > 0:
+                        # Add estimated rows for missing days
+                        estimated_rows = []
+                        for d in missing_dates:
+                            dow = d.dayofweek
+                            is_weekend = dow >= 5
+                            est_energy = weekend_avg_real if is_weekend else weekday_avg_real
+                            if pd.isna(est_energy):
+                                est_energy = daily['Energy_kWh'].mean()
+                            estimated_total += est_energy
+                            estimated_rows.append({
+                                'Date': pd.Timestamp(d),
+                                'Energy_kWh': est_energy,
+                                'Peak_kW': 0,
+                                'DayOfWeek': dow,
+                                'DayName': d.strftime('%a'),
+                                'IsWeekend': is_weekend,
+                                'DayType': '⬜ Estimated',
+                                'IsEstimated': True
+                            })
+                        
+                        estimated_df = pd.DataFrame(estimated_rows)
+                        display_daily = pd.concat([daily, estimated_df], ignore_index=True)
+                        display_daily = display_daily.sort_values('Date')
+                    
+                    # Create chart with appropriate colors
+                    color_map = {
+                        '🟢 Weekday': '#4ecdc4',
+                        '🔵 Weekend': '#ff6b6b',
+                        '⬜ Estimated': '#9ca3af'  # Gray for estimates
+                    }
+                    
+                    fig = px.bar(display_daily, x='Date', y='Energy_kWh', 
                                 color='DayType',
-                                color_discrete_map={
-                                    '🟢 Weekday': '#4ecdc4',
-                                    '🔵 Weekend': '#ff6b6b'
-                                },
+                                color_discrete_map=color_map,
                                 title='Daily Energy Consumption (Weekday vs Weekend)',
                                 hover_data={'DayName': True, 'Peak_kW': ':.1f', 'Energy_kWh': ':.1f'})
                     
@@ -1967,7 +2188,7 @@ def main():
                     fig.update_xaxes(gridcolor='#e2e8f0', tickformat='%b %d\n%a')
                     fig.update_yaxes(gridcolor='#e2e8f0', title='Energy (kWh)')
                     
-                    # Weekend shading - convert to timestamp for arithmetic
+                    # Weekend shading - only for real weekend data
                     for _, row in daily[daily['IsWeekend']].iterrows():
                         ts = pd.Timestamp(row['Date'])
                         fig.add_vrect(
@@ -1980,17 +2201,29 @@ def main():
                     
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
-                    weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
+                    # Show metrics - always from REAL data only
+                    actual_total = daily['Energy_kWh'].sum()
                     
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Weekday Avg", f"{weekday_avg:.1f} kWh")
-                    with col2:
-                        st.metric("Weekend Avg", f"{weekend_avg:.1f} kWh")
-                    with col3:
-                        diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
-                        st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
+                    if show_estimates and estimated_total > 0:
+                        st.info(f"⚠️ **Estimated gaps:** {len(missing_dates)} days (~{estimated_total:,.0f} kWh) — NOT included in KPIs")
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Actual Energy", f"{actual_total:,.0f} kWh")
+                        with col2:
+                            st.metric("Estimated Gaps", f"{estimated_total:,.0f} kWh")
+                        with col3:
+                            st.metric("Visual Total", f"{actual_total + estimated_total:,.0f} kWh")
+                        with col4:
+                            st.metric("Missing Days", f"{len(missing_dates)}")
+                    else:
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Weekday Avg", f"{weekday_avg_real:.1f} kWh")
+                        with col2:
+                            st.metric("Weekend Avg", f"{weekend_avg_real:.1f} kWh")
+                        with col3:
+                            diff_pct = ((weekend_avg_real - weekday_avg_real) / weekday_avg_real * 100) if weekday_avg_real > 0 else 0
+                            st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
                 
                 # Cumulative Energy Meter Reading Chart - Simple version
                 st.markdown("---")
@@ -2187,23 +2420,241 @@ def main():
     with tab4:
         try:
             if 'ToD_Period' in df.columns:
-                # Normalize ToD values (OFF-PEAK -> OFFPEAK)
+                st.markdown("#### ⚡ ToD Optimization Planner")
+                
+                # Normalize ToD values
                 df_tod = df.copy()
                 df_tod['ToD_Period'] = df_tod['ToD_Period'].str.upper().str.replace('-', '').str.strip()
-                tod_data = df_tod['ToD_Period'].value_counts()
-                if len(tod_data) > 0:
-                    fig = px.pie(values=tod_data.values, names=tod_data.index, title='Time-of-Day Distribution',
-                                color=tod_data.index, color_discrete_map={
-                                    'OFFPEAK': '#06d6a0', 'NORMAL': '#ffd166', 'PEAK': '#ef476f'
-                                })
-                    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#475569')
-                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Configuration
+                rates = {'OFFPEAK': 5.18, 'NORMAL': 6.30, 'PEAK': 7.14}
+                hours = {'OFFPEAK': 7, 'NORMAL': 11, 'PEAK': 6}
+                target_split = {'OFFPEAK': 0.40, 'NORMAL': 0.40, 'PEAK': 0.20}
+                period_labels = {'OFFPEAK': '🌙 Off-Peak', 'NORMAL': '☀️ Normal', 'PEAK': '🔥 Peak'}
+                period_colors = {'OFFPEAK': '#06d6a0', 'NORMAL': '#ffd166', 'PEAK': '#ef476f'}
+                
+                # Controls row
+                ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 2])
+                
+                with ctrl_col1:
+                    shiftable_pct = st.slider(
+                        "Shiftable Load %",
+                        min_value=20, max_value=60, value=35,
+                        help="Percentage of load that can be shifted between periods"
+                    ) / 100
+                
+                with ctrl_col2:
+                    view_mode = st.radio("View", ["Weekly", "Monthly"], horizontal=True)
+                
+                with ctrl_col3:
+                    # Baseline detection
+                    st.markdown("**Detected Baselines:**")
+                    baselines = {}
+                    for period in ['OFFPEAK', 'NORMAL', 'PEAK']:
+                        period_kw = df_tod[(df_tod['ToD_Period'] == period) & (df_tod['kW_Total'] > 0)]['kW_Total']
+                        baselines[period] = period_kw.quantile(0.10) if len(period_kw) > 0 else 0
+                    st.caption(f"Off-Peak: {baselines['OFFPEAK']:.1f} kW | Normal: {baselines['NORMAL']:.1f} kW | Peak: {baselines['PEAK']:.1f} kW")
+                
+                # Calculate energy by ToD period per day
+                tod_energy = []
+                for (date, period), group in df_tod.groupby([df_tod['Date'].dt.date, 'ToD_Period']):
+                    group_sorted = group.sort_values('Timestamp')
+                    if len(group_sorted) >= 2:
+                        energy = max(0, group_sorted['Energy_kWh'].iloc[-1] - group_sorted['Energy_kWh'].iloc[0])
+                    else:
+                        energy = 0
+                    tod_energy.append({'Date': date, 'ToD_Period': period, 'Energy_kWh': energy})
+                
+                tod_df = pd.DataFrame(tod_energy)
+                
+                if len(tod_df) > 0:
+                    tod_df['Date'] = pd.to_datetime(tod_df['Date'])
+                    tod_df['Week'] = tod_df['Date'].dt.isocalendar().week.astype(int)
+                    tod_df['Month'] = tod_df['Date'].dt.to_period('M').astype(str)
+                    
+                    # Aggregate based on view mode
+                    if view_mode == "Weekly":
+                        agg_df = tod_df.groupby(['Week', 'ToD_Period'])['Energy_kWh'].sum().unstack(fill_value=0)
+                        x_label = "Week"
+                    else:
+                        agg_df = tod_df.groupby(['Month', 'ToD_Period'])['Energy_kWh'].sum().unstack(fill_value=0)
+                        x_label = "Month"
+                    
+                    # Ensure all periods exist
+                    for period in ['OFFPEAK', 'NORMAL', 'PEAK']:
+                        if period not in agg_df.columns:
+                            agg_df[period] = 0
+                    
+                    # Calculate averages for grid lines
+                    avg_values = agg_df.mean()
+                    
+                    # ===== ACTUAL vs IDEAL COMPARISON =====
+                    st.markdown("---")
+                    
+                    # Get latest period data
+                    latest_idx = agg_df.index[-1]
+                    latest_data = agg_df.loc[latest_idx]
+                    total_energy = latest_data.sum()
+                    
+                    if total_energy > 0:
+                        # Calculate actual vs ideal
+                        actual_cost = sum(latest_data.get(p, 0) * rates[p] for p in rates)
+                        ideal_energy = {p: total_energy * target_split[p] for p in target_split}
+                        ideal_cost = sum(ideal_energy[p] * rates[p] for p in rates)
+                        
+                        # Calculate percentages
+                        actual_pct = {p: (latest_data.get(p, 0) / total_energy * 100) for p in rates}
+                        
+                        # Determine if already optimal
+                        savings = actual_cost - ideal_cost
+                        is_optimal = actual_pct.get('OFFPEAK', 0) >= 40 and actual_pct.get('PEAK', 0) <= 20
+                        
+                        # Display comparison cards
+                        st.markdown(f"##### 📊 {view_mode} {latest_idx} Analysis")
+                        
+                        comp_col1, comp_col2 = st.columns(2)
+                        
+                        with comp_col1:
+                            st.markdown("**Current Distribution**")
+                            for period in ['OFFPEAK', 'NORMAL', 'PEAK']:
+                                energy = latest_data.get(period, 0)
+                                pct = actual_pct.get(period, 0)
+                                cost = energy * rates[period]
+                                target = target_split[period] * 100
+                                status = "✓" if (period == 'OFFPEAK' and pct >= target) or (period == 'PEAK' and pct <= target) or (period == 'NORMAL') else "↗️" if period == 'OFFPEAK' else "↘️"
+                                st.markdown(f"{period_labels[period]}: **{energy:.0f} kWh** ({pct:.0f}%) → ₹{cost:,.0f} {status}")
+                            st.markdown(f"**Total: {total_energy:.0f} kWh = ₹{actual_cost:,.0f}**")
+                        
+                        with comp_col2:
+                            st.markdown("**Target Distribution (40/40/20)**")
+                            for period in ['OFFPEAK', 'NORMAL', 'PEAK']:
+                                energy = ideal_energy[period]
+                                pct = target_split[period] * 100
+                                cost = energy * rates[period]
+                                st.markdown(f"{period_labels[period]}: **{energy:.0f} kWh** ({pct:.0f}%) → ₹{cost:,.0f}")
+                            st.markdown(f"**Total: {total_energy:.0f} kWh = ₹{ideal_cost:,.0f}**")
+                        
+                        # Savings/Status Banner
+                        st.markdown("---")
+                        if is_optimal or savings <= 0:
+                            st.success(f"""
+                            ✅ **Excellent! Current distribution is optimal.**
+                            
+                            Your Off-Peak usage ({actual_pct.get('OFFPEAK', 0):.0f}%) exceeds the 40% target. 
+                            Peak usage ({actual_pct.get('PEAK', 0):.0f}%) is below the 20% threshold.
+                            
+                            **Recommendation:** Maintain current load scheduling. You're already saving compared to target!
+                            """)
+                        else:
+                            shift_from_peak = max(0, latest_data.get('PEAK', 0) - ideal_energy['PEAK'])
+                            st.warning(f"""
+                            💡 **Optimization Opportunity**
+                            
+                            | Metric | Value |
+                            |--------|-------|
+                            | Potential {view_mode} Savings | **₹{savings:,.0f}** |
+                            | Monthly Projection | **₹{savings * (4 if view_mode == 'Weekly' else 1):,.0f}** |
+                            | Shift from Peak | **{shift_from_peak:.0f} kWh** |
+                            
+                            **Recommendation:** Move {shift_from_peak:.0f} kWh from Peak (5PM-11PM) to Off-Peak (11PM-6AM)
+                            """)
+                        
+                        # ===== TREND CHART =====
+                        st.markdown("---")
+                        st.markdown(f"##### 📈 {view_mode} ToD Trend")
+                        
+                        # Prepare chart data
+                        chart_data = agg_df.reset_index()
+                        chart_melted = chart_data.melt(
+                            id_vars=[chart_data.columns[0]], 
+                            value_vars=['OFFPEAK', 'NORMAL', 'PEAK'],
+                            var_name='Period',
+                            value_name='Energy_kWh'
+                        )
+                        chart_melted['Period_Label'] = chart_melted['Period'].map(period_labels)
+                        
+                        fig = px.bar(
+                            chart_melted,
+                            x=chart_data.columns[0],
+                            y='Energy_kWh',
+                            color='Period',
+                            color_discrete_map=period_colors,
+                            barmode='group',
+                            title=f'{view_mode}ly Energy by ToD Period'
+                        )
+                        
+                        # Add average grid lines with legends
+                        for period in ['OFFPEAK', 'NORMAL', 'PEAK']:
+                            avg_val = avg_values.get(period, 0)
+                            fig.add_hline(
+                                y=avg_val,
+                                line_dash="dash",
+                                line_color=period_colors[period],
+                                line_width=1,
+                                annotation_text=f"Avg {period}: {avg_val:.0f}",
+                                annotation_position="right"
+                            )
+                        
+                        fig.update_layout(
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(21,29,40,1)',
+                            font_color='#475569',
+                            title_font_color='#1e293b',
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                            xaxis_title=x_label,
+                            yaxis_title='Energy (kWh)'
+                        )
+                        fig.update_xaxes(gridcolor='#e2e8f0')
+                        fig.update_yaxes(gridcolor='#e2e8f0')
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # ===== PIE CHART - Overall Distribution =====
+                        pie_col1, pie_col2 = st.columns(2)
+                        
+                        with pie_col1:
+                            st.markdown("**Current ToD Mix**")
+                            total_by_period = tod_df.groupby('ToD_Period')['Energy_kWh'].sum()
+                            fig_pie = px.pie(
+                                values=total_by_period.values,
+                                names=total_by_period.index,
+                                color=total_by_period.index,
+                                color_discrete_map=period_colors
+                            )
+                            fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#475569')
+                            st.plotly_chart(fig_pie, use_container_width=True)
+                        
+                        with pie_col2:
+                            st.markdown("**Target ToD Mix (40/40/20)**")
+                            fig_target = px.pie(
+                                values=[40, 40, 20],
+                                names=['OFFPEAK', 'NORMAL', 'PEAK'],
+                                color=['OFFPEAK', 'NORMAL', 'PEAK'],
+                                color_discrete_map=period_colors
+                            )
+                            fig_target.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='#475569')
+                            st.plotly_chart(fig_target, use_container_width=True)
+                        
+                        # ===== TARIFF REFERENCE =====
+                        st.markdown("---")
+                        st.markdown("##### 📋 WBSEDCL HT Industrial Tariff Reference")
+                        tariff_df = pd.DataFrame({
+                            'Period': ['🌙 Off-Peak', '☀️ Normal', '🔥 Peak'],
+                            'Hours': ['11PM - 6AM (7 hrs)', '6AM - 5PM (11 hrs)', '5PM - 11PM (6 hrs)'],
+                            'Rate (₹/kWh)': [5.18, 6.30, 7.14],
+                            'Target %': ['40%', '40%', '20%'],
+                            'Strategy': ['Maximize - Cheapest', 'Balance', 'Minimize - Costliest']
+                        })
+                        st.dataframe(tariff_df, use_container_width=True, hide_index=True)
+                    
+                    else:
+                        st.warning("No energy data available for ToD analysis")
                 else:
-                    st.info("No ToD data available")
+                    st.warning("No ToD period data available")
             else:
                 st.info("ToD_Period column not found")
         except Exception as e:
-            st.warning(f"Could not generate ToD chart: {e}")
+            st.warning(f"Could not generate ToD analysis: {e}")
     
     # ============= RECOMMENDATIONS =============
     st.markdown("""
@@ -2233,17 +2684,19 @@ def main():
         """, unsafe_allow_html=True)
     
     with cols[1]:
+        sustained_alerts = kpis.get('pf_sustained_alerts', 0)
+        sustained_min = kpis.get('pf_sustained_minutes', 0)
         st.markdown(f"""
             <div class="rec-card">
-                <div class="rec-priority high"></div>
+                <div class="rec-priority {'high' if sustained_alerts > 0 else 'medium'}"></div>
                 <div style="flex: 1;">
                     <div class="rec-title">Fix Low-Load PF Performance</div>
                     <div class="rec-category">Power Quality</div>
-                    <div class="rec-insight">PF drops to {kpis['pf_min']:.2f} during idle. {kpis['pf_below_92']:.0f}% of time in penalty zone.</div>
-                    <div class="rec-action">→ Reconfigure APFC panel staging for lower thresholds</div>
+                    <div class="rec-insight">{f'{sustained_alerts} sustained low PF events ({sustained_min} min total).' if sustained_alerts > 0 else 'No sustained PF issues.'} Min PF: {kpis['pf_min']:.2f}</div>
+                    <div class="rec-action">→ {'Reconfigure APFC panel staging for lower thresholds' if sustained_alerts > 0 else 'Continue monitoring - transients filtered'}</div>
                     <div class="rec-savings">
                         <span class="rec-savings-label">Monthly Savings:</span>
-                        <span class="rec-savings-value">₹2,500+</span>
+                        <span class="rec-savings-value">{'₹2,500+' if sustained_alerts > 0 else '✓ Optimized'}</span>
                     </div>
                 </div>
             </div>
