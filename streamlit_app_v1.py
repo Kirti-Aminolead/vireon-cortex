@@ -351,7 +351,7 @@ def safe_fmt(value, fmt=".2f", default="0"):
 
 
 # ============= DATA LOADING =============
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
     """Load data from public Google Sheet with robust error handling
     
@@ -359,8 +359,9 @@ def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
     """
     try:
         import time
-        # Cache buster to force fresh data from Google Sheets CDN
-        cache_buster = int(time.time())
+        import random
+        # More aggressive cache buster
+        cache_buster = f"{int(time.time())}_{random.randint(1000,9999)}"
         
         # Try multiple URL formats with cache buster
         urls = [
@@ -1367,8 +1368,16 @@ def main():
             valid_ts = df['Timestamp'].notna().sum()
             st.write(f"**Valid Timestamps:** {valid_ts}/{len(df)}")
             if valid_ts > 0:
-                st.write(f"**First TS:** {df['Timestamp'].dropna().iloc[0]}")
-                st.write(f"**Last TS:** {df['Timestamp'].dropna().iloc[-1]}")
+                df_sorted = df.sort_values('Timestamp')
+                st.write(f"**First TS:** {df_sorted['Timestamp'].iloc[0]}")
+                st.write(f"**Last TS:** {df_sorted['Timestamp'].iloc[-1]}")
+                
+                # Show latest per location
+                if 'Location' in df.columns:
+                    st.write("**Latest per Location:**")
+                    for loc in df['Location'].unique():
+                        df_loc = df[df['Location'] == loc].sort_values('Timestamp')
+                        st.write(f"  {loc}: {df_loc['Timestamp'].iloc[-1]}")
             else:
                 st.warning("⚠️ No valid timestamps parsed!")
                 if data_source == "Google Sheets":
