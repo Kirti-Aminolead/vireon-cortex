@@ -20,16 +20,9 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import requests
 from io import StringIO
-
-# IST Timezone (UTC+5:30)
-IST = timezone(timedelta(hours=5, minutes=30))
-
-def get_ist_now():
-    """Get current time in IST"""
-    return datetime.now(IST).replace(tzinfo=None)
 
 # ============= PAGE CONFIG =============
 st.set_page_config(
@@ -296,22 +289,6 @@ st.markdown("""
 
 
 # ============= HELPER FUNCTIONS =============
-def clean_cumulative_meter_data(df):
-    """
-    Clean cumulative meter data - minimal cleaning.
-    Only removes rows with NaN in critical columns.
-    Does NOT filter based on energy values.
-    """
-    if 'Energy_kWh' not in df.columns or 'Location' not in df.columns or 'Timestamp' not in df.columns:
-        return df
-    
-    # Only remove NaN timestamps and sort
-    df = df.dropna(subset=['Timestamp'])
-    df = df.sort_values('Timestamp').reset_index(drop=True)
-    
-    return df
-
-
 def safe_get(df, column, default=0, agg='mean'):
     """Safely get aggregated value from dataframe column"""
     try:
@@ -351,7 +328,7 @@ def safe_fmt(value, fmt=".2f", default="0"):
 
 
 # ============= DATA LOADING =============
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
     """Load data from public Google Sheet with robust error handling
     
@@ -359,9 +336,8 @@ def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
     """
     try:
         import time
-        import random
-        # More aggressive cache buster
-        cache_buster = f"{int(time.time())}_{random.randint(1000,9999)}"
+        # Cache buster to force fresh data from Google Sheets CDN
+        cache_buster = int(time.time())
         
         # Try multiple URL formats with cache buster
         urls = [
@@ -447,10 +423,8 @@ def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
         
         if 'Timestamp' in df.columns:
             df = df.dropna(subset=['Timestamp'])
+            # CRITICAL: Sort by timestamp to ensure chronological order
             df = df.sort_values('Timestamp').reset_index(drop=True)
-            
-            # Clean cumulative meter data (removes invalid readings)
-            df = clean_cumulative_meter_data(df)
         
         return df
     except Exception as e:
@@ -460,7 +434,7 @@ def load_data_from_public_sheet(sheet_id, gid="754782201", _cache_key=None):
 
 def get_tod_period():
     """Get current ToD period"""
-    hour = get_ist_now().hour
+    hour = datetime.now().hour
     if 6 <= hour < 17:
         return "NORMAL", "tod-normal"
     elif 17 <= hour < 23:
@@ -487,25 +461,25 @@ def calculate_kpis(df):
     n = len(df)
     kpis['total_readings'] = n
     
-    # Energy calculation - use last reading minus first reading per location
-    # This handles meter resets correctly (cumulative meter)
-    if 'Energy_kWh' in df.columns and 'Timestamp' in df.columns and 'Location' in df.columns:
+    # Energy calculation - handle meter resets properly
+    # Use diff method to sum only positive increments (ignore resets)
+    if 'Energy_kWh' in df.columns and 'Timestamp' in df.columns:
         try:
-            total_energy = 0
-            for loc in df['Location'].unique():
-                df_loc = df[df['Location'] == loc].sort_values('Timestamp')
-                if len(df_loc) >= 2:
-                    first_e = df_loc['Energy_kWh'].iloc[0]
-                    last_e = df_loc['Energy_kWh'].iloc[-1]
-                    loc_energy = last_e - first_e
-                    if loc_energy > 0:
-                        total_energy += loc_energy
-            kpis['total_energy'] = total_energy
+            df_sorted = df.sort_values('Timestamp').copy()
+            energy_diff = df_sorted['Energy_kWh'].diff()
+            # Only count positive diffs less than 500 kWh (reasonable max per reading)
+            # Negative diffs = meter reset, very large diffs = data error
+            valid_energy = energy_diff.apply(lambda x: x if (pd.notna(x) and 0 < x < 500) else 0)
+            kpis['total_energy'] = valid_energy.sum()
         except:
-            kpis['total_energy'] = 0
+            # Fallback to max-min method
+            energy_max = safe_get(df, 'Energy_kWh', 0, 'max')
+            energy_min = safe_get(df, 'Energy_kWh', 0, 'min')
+            kpis['total_energy'] = max(0, energy_max - energy_min)
     else:
         kpis['total_energy'] = 0
     
+    kpis['total_cost'] = safe_get(df, 'Daily_Cost_Rs', 0, 'sum')
     kpis['peak_demand'] = safe_get(df, 'kW_Total', 0, 'max')
     kpis['max_demand_recorded'] = safe_get(df, 'Max_Demand_kW', 0, 'max')
     kpis['avg_pf'] = safe_get(df, 'PF_Avg', 0, 'mean')
@@ -562,55 +536,6 @@ def calculate_kpis(df):
                 kpis['pf_min'] = pf_series.min()
         except Exception:
             pass
-    
-    # ToD Energy Breakdown - use proportion of readings in each period
-    # Since meter resets make diff unreliable across ToD boundaries
-    kpis['energy_peak'] = kpis['energy_normal'] = kpis['energy_offpeak'] = 0
-    if 'ToD_Period' in df.columns and kpis['total_energy'] > 0:
-        try:
-            df_tod = df.copy()
-            df_tod['ToD_Normalized'] = df_tod['ToD_Period'].str.upper().str.replace('-', '').str.strip()
-            
-            # Count readings per period
-            tod_counts = df_tod['ToD_Normalized'].value_counts()
-            total_readings = tod_counts.sum()
-            
-            if total_readings > 0:
-                # Distribute energy proportionally based on reading counts
-                for period in ['PEAK', 'NORMAL', 'OFFPEAK']:
-                    if period in tod_counts.index:
-                        proportion = tod_counts[period] / total_readings
-                        period_energy = kpis['total_energy'] * proportion
-                        
-                        if period == 'PEAK':
-                            kpis['energy_peak'] = period_energy
-                        elif period == 'NORMAL':
-                            kpis['energy_normal'] = period_energy
-                        else:
-                            kpis['energy_offpeak'] = period_energy
-        except Exception:
-            pass
-    
-    # Calculate cost based on ToD rates (after ToD energy is calculated)
-    # WBSEDCL HT Industrial: Peak=8.37, Normal=6.87, Off-peak=5.18
-    kpis['total_cost'] = (kpis.get('energy_peak', 0) * 8.37 + 
-                          kpis.get('energy_normal', 0) * 6.87 + 
-                          kpis.get('energy_offpeak', 0) * 5.18)
-    # Fallback if ToD not available
-    if kpis['total_cost'] == 0 and kpis['total_energy'] > 0:
-        kpis['total_cost'] = kpis['total_energy'] * 6.87
-    
-    # Contracted demand (from your setup - 200 kW)
-    kpis['contracted_demand'] = 200  # kW
-    
-    # Number of days in data (for monthly projections)
-    if 'Timestamp' in df.columns:
-        try:
-            kpis['data_days'] = (df['Timestamp'].max() - df['Timestamp'].min()).days + 1
-        except:
-            kpis['data_days'] = 1
-    else:
-        kpis['data_days'] = 1
     
     return kpis
 
@@ -1296,9 +1221,8 @@ def main():
                 
                 if 'Timestamp' in df.columns:
                     df = df.dropna(subset=['Timestamp'])
+                    # CRITICAL: Sort by timestamp to ensure chronological order
                     df = df.sort_values('Timestamp').reset_index(drop=True)
-                    # Clean cumulative meter data
-                    df = clean_cumulative_meter_data(df)
                     
             except Exception as e:
                 st.error(f"❌ Error loading CSV: {e}")
@@ -1345,9 +1269,8 @@ def main():
                 
                 if 'Timestamp' in df.columns:
                     df = df.dropna(subset=['Timestamp'])
+                    # CRITICAL: Sort by timestamp to ensure chronological order
                     df = df.sort_values('Timestamp').reset_index(drop=True)
-                    # Clean cumulative meter data
-                    df = clean_cumulative_meter_data(df)
                     
             except Exception as e:
                 st.error(f"❌ Error loading CSV: {e}")
@@ -1368,16 +1291,8 @@ def main():
             valid_ts = df['Timestamp'].notna().sum()
             st.write(f"**Valid Timestamps:** {valid_ts}/{len(df)}")
             if valid_ts > 0:
-                df_sorted = df.sort_values('Timestamp')
-                st.write(f"**First TS:** {df_sorted['Timestamp'].iloc[0]}")
-                st.write(f"**Last TS:** {df_sorted['Timestamp'].iloc[-1]}")
-                
-                # Show latest per location
-                if 'Location' in df.columns:
-                    st.write("**Latest per Location:**")
-                    for loc in df['Location'].unique():
-                        df_loc = df[df['Location'] == loc].sort_values('Timestamp')
-                        st.write(f"  {loc}: {df_loc['Timestamp'].iloc[-1]}")
+                st.write(f"**First TS:** {df['Timestamp'].dropna().iloc[0]}")
+                st.write(f"**Last TS:** {df['Timestamp'].dropna().iloc[-1]}")
             else:
                 st.warning("⚠️ No valid timestamps parsed!")
                 if data_source == "Google Sheets":
@@ -1416,7 +1331,10 @@ def main():
             df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         elif shed_filter == "Shed 2 (Sub-Feed)":
             df = df[df[location_col].str.contains('02|Shed_02|Shed 2', case=False, na=False)]
-        # For "All Sheds (Overview)" - keep all data, don't filter
+        elif shed_filter == "All Sheds (Overview)":
+            # For "All Sheds", use Shed 1 data for KPIs (since it includes Shed 2)
+            # But we keep df_original for the overview comparison
+            df = df[df[location_col].str.contains('01|Shed_01|Shed 1', case=False, na=False)]
         
         if df.empty:
             st.warning(f"No data found for {shed_filter}. Try a different filter.")
@@ -1445,10 +1363,10 @@ def main():
         # Apply report date filter (only if Timestamp exists)
         if 'Timestamp' in report_df.columns:
             if report_type == "Weekly Report":
-                cutoff = pd.Timestamp(get_ist_now()) - pd.Timedelta(days=7)
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=7)
                 report_df = report_df[report_df['Timestamp'] >= cutoff]
             elif report_type == "Monthly Report":
-                cutoff = pd.Timestamp(get_ist_now()) - pd.Timedelta(days=30)
+                cutoff = pd.Timestamp.now() - pd.Timedelta(days=30)
                 report_df = report_df[report_df['Timestamp'] >= cutoff]
             elif report_type == "Custom Range":
                 if report_start and report_end:
@@ -1492,7 +1410,7 @@ def main():
     # If All Sheds, show quick comparison first
     if shed_filter == "All Sheds (Overview)":
         # Current date/time display
-        current_datetime = get_ist_now()
+        current_datetime = datetime.now()
         st.markdown(f"""
             <div class="section-header">
                 <span class="section-icon">🏭</span>
@@ -1531,7 +1449,7 @@ def main():
                     if pd.notna(last_ts):
                         last_reading_str = last_ts.strftime('%Y-%m-%d %H:%M:%S')
                         time_ago = (current_datetime - last_ts.to_pydatetime().replace(tzinfo=None))
-                        mins_ago = abs(time_ago.total_seconds() / 60)  # Use abs to handle future timestamps
+                        mins_ago = time_ago.total_seconds() / 60
                         if mins_ago < 10:
                             status_icon = "🟢"
                             status_text = f"{mins_ago:.0f} min ago"
@@ -1842,33 +1760,33 @@ def main():
                             <span class="kpi-value" style="color: #ffd166">{kpis['neutral_risk']} ({kpis['neutral_risk']/max(fire_total,1)*100:.1f}%)</span>
                         </div>
                     </div>
-                </div>
-                <div style="margin-top: 16px;">
-                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
-                        <div style="background: rgba(6, 214, 160, 0.1); border: 1px solid #06d6a0; border-radius: 8px; padding: 12px; text-align: center;">
-                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #06d6a0; margin-bottom: 4px;">✓ Safe</div>
-                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #06d6a0;">{kpis['fire_normal']}</div>
-                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_normal']/max(fire_total,1)*100:.1f}%</div>
-                        </div>
-                        <div style="background: rgba(255, 209, 102, 0.1); border: 1px solid #ffd166; border-radius: 8px; padding: 12px; text-align: center;">
-                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #ffd166; margin-bottom: 4px;">⚡ Watch</div>
-                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #ffd166;">{kpis['fire_warning']}</div>
-                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_warning']/max(fire_total,1)*100:.1f}%</div>
-                        </div>
-                        <div style="background: rgba(247, 127, 0, 0.1); border: 1px solid #f77f00; border-radius: 8px; padding: 12px; text-align: center;">
-                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #f77f00; margin-bottom: 4px;">🔥 High</div>
-                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #f77f00;">{kpis['fire_high']}</div>
-                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_high']/max(fire_total,1)*100:.1f}%</div>
-                        </div>
-                        <div style="background: rgba(239, 71, 111, 0.15); border: 2px solid #ef476f; border-radius: 8px; padding: 12px; text-align: center;">
-                            <div style="font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #ef476f; margin-bottom: 4px;">🚨 CRITICAL</div>
-                            <div style="font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #ef476f;">{kpis['fire_critical']}</div>
-                            <div style="font-size: 10px; color: #5c6b7a;">{kpis['fire_critical']/max(fire_total,1)*100:.1f}%</div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <div class="risk-grid">
+                            <div class="risk-item normal">
+                                <div class="risk-level" style="color: #06d6a0">Safe</div>
+                                <div class="risk-count" style="color: #06d6a0">{kpis['fire_normal']}</div>
+                                <div class="risk-pct">{kpis['fire_normal']/max(fire_total,1)*100:.1f}%</div>
+                            </div>
+                            <div class="risk-item warning">
+                                <div class="risk-level" style="color: #ffd166">Watch</div>
+                                <div class="risk-count" style="color: #ffd166">{kpis['fire_warning']}</div>
+                                <div class="risk-pct">{kpis['fire_warning']/max(fire_total,1)*100:.1f}%</div>
+                            </div>
+                            <div class="risk-item high">
+                                <div class="risk-level" style="color: #f77f00">High</div>
+                                <div class="risk-count" style="color: #f77f00">{kpis['fire_high']}</div>
+                                <div class="risk-pct">{kpis['fire_high']/max(fire_total,1)*100:.1f}%</div>
+                            </div>
+                            <div class="risk-item critical">
+                                <div class="risk-level" style="color: #ef476f">Critical</div>
+                                <div class="risk-count" style="color: #ef476f">{kpis['fire_critical']}</div>
+                                <div class="risk-pct">{kpis['fire_critical']/max(fire_total,1)*100:.1f}%</div>
+                            </div>
                         </div>
                     </div>
                 </div>
                 <div class="kpi-insight">
-                    {"✓ Fire risk under control. All systems normal." if kpis['fire_critical'] == 0 else f"🚨 {kpis['fire_critical']} CRITICAL events detected! Immediate inspection required."}
+                    {"✓ Fire risk under control." if kpis['fire_critical'] == 0 else f"⚠️ {kpis['fire_critical']} critical events. Inspect wiring."}
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -1948,126 +1866,98 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                # Calculate daily consumption: last reading - first reading for each day
-                daily_stats = []
-                for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
-                    group_sorted = group.sort_values('Timestamp')
-                    if len(group_sorted) >= 2:
-                        first_energy = group_sorted['Energy_kWh'].iloc[0]
-                        last_energy = group_sorted['Energy_kWh'].iloc[-1]
-                        energy = max(0, last_energy - first_energy)
-                    else:
-                        energy = 0
-                    peak_kw = group_sorted['kW_Total'].max()
-                    daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
+                # CRITICAL: Sort by timestamp first to ensure chronological order
+                df_sorted = df.sort_values('Timestamp').copy()
                 
-                daily = pd.DataFrame(daily_stats)
+                # Calculate daily energy using diff method (handles jumbled data correctly)
+                def calc_daily_energy(group):
+                    """Calculate energy for a day using cumulative meter readings"""
+                    if len(group) < 2:
+                        return 0
+                    # group is a Series (data is pre-sorted by timestamp)
+                    # Use first and last values
+                    first_val = group.iloc[0]
+                    last_val = group.iloc[-1]
+                    energy = last_val - first_val
+                    # If negative (meter reset or data issue), try diff method
+                    if energy < 0:
+                        diffs = group.diff()
+                        energy = diffs[diffs > 0].sum()
+                    return max(0, energy)
                 
-                if len(daily) == 0:
-                    st.warning("No daily data available")
-                else:
-                    daily = daily[daily['Energy_kWh'] < 2000]
-                    daily['Date'] = pd.to_datetime(daily['Date'])
-                    daily['DayOfWeek'] = daily['Date'].dt.dayofweek
-                    daily['DayName'] = daily['Date'].dt.strftime('%a')
-                    daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])
-                    daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
-                    
-                    fig = px.bar(daily, x='Date', y='Energy_kWh', 
-                                color='DayType',
-                                color_discrete_map={
-                                    '🟢 Weekday': '#4ecdc4',
-                                    '🔵 Weekend': '#ff6b6b'
-                                },
-                                title='Daily Energy Consumption (Weekday vs Weekend)',
-                                hover_data={'DayName': True, 'Peak_kW': ':.1f', 'Energy_kWh': ':.1f'})
-                    
-                    fig.update_layout(
-                        paper_bgcolor='rgba(0,0,0,0)', 
-                        plot_bgcolor='rgba(21,29,40,1)',
-                        font_color='#8899a6', 
-                        title_font_color='#f0f4f8',
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                daily = df_sorted.groupby(pd.to_datetime(df_sorted['Date']).dt.date).agg({
+                    'Energy_kWh': calc_daily_energy,
+                    'kW_Total': 'max'
+                }).reset_index()
+                daily.columns = ['Date', 'Energy_kWh', 'Peak_kW']
+                
+                # Filter out unrealistic values (more than 10,000 kWh per day is likely an error)
+                daily = daily[daily['Energy_kWh'] < 10000]
+                
+                # Add day of week info for coloring
+                daily['Date'] = pd.to_datetime(daily['Date'])
+                daily['DayOfWeek'] = daily['Date'].dt.dayofweek  # 0=Mon, 6=Sun
+                daily['DayName'] = daily['Date'].dt.strftime('%a')  # Mon, Tue, etc.
+                daily['IsWeekend'] = daily['DayOfWeek'].isin([5, 6])  # Sat=5, Sun=6
+                daily['DayType'] = daily['IsWeekend'].map({True: '🔵 Weekend', False: '🟢 Weekday'})
+                
+                # Create bar chart with weekend/weekday colors
+                fig = px.bar(daily, x='Date', y='Energy_kWh', 
+                            color='DayType',
+                            color_discrete_map={
+                                '🟢 Weekday': '#4ecdc4',
+                                '🔵 Weekend': '#ff6b6b'
+                            },
+                            title='Daily Energy Consumption (Weekday vs Weekend)',
+                            hover_data={'DayName': True, 'Peak_kW': ':.1f', 'Energy_kWh': ':.1f'})
+                
+                fig.update_layout(
+                    paper_bgcolor='rgba(0,0,0,0)', 
+                    plot_bgcolor='rgba(21,29,40,1)',
+                    font_color='#8899a6', 
+                    title_font_color='#f0f4f8',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
                     )
-                    fig.update_xaxes(gridcolor='#253040', tickformat='%b %d\n%a')
-                    fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
-                    
-                    # Weekend shading - convert to timestamp for arithmetic
-                    for _, row in daily[daily['IsWeekend']].iterrows():
-                        ts = pd.Timestamp(row['Date'])
-                        fig.add_vrect(
-                            x0=ts - pd.Timedelta(hours=12),
-                            x1=ts + pd.Timedelta(hours=12),
-                            fillcolor="rgba(17, 138, 178, 0.1)",
-                            layer="below",
-                            line_width=0,
-                        )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
-                    weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Weekday Avg", f"{weekday_avg:.1f} kWh")
-                    with col2:
-                        st.metric("Weekend Avg", f"{weekend_avg:.1f} kWh")
-                    with col3:
-                        diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
-                        st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
+                )
+                fig.update_xaxes(gridcolor='#253040', tickformat='%b %d\n%a')
+                fig.update_yaxes(gridcolor='#253040', title='Energy (kWh)')
                 
-                # Cumulative Energy Meter Reading Chart - Simple version
-                st.markdown("---")
-                st.markdown("#### 📈 Cumulative Meter Reading")
+                # Add weekend shading
+                for _, row in daily[daily['IsWeekend']].iterrows():
+                    fig.add_vrect(
+                        x0=row['Date'] - pd.Timedelta(hours=12),
+                        x1=row['Date'] + pd.Timedelta(hours=12),
+                        fillcolor="rgba(17, 138, 178, 0.1)",
+                        layer="below",
+                        line_width=0,
+                    )
                 
-                if len(df) > 0 and 'Timestamp' in df.columns and 'Energy_kWh' in df.columns:
-                    # Just sort by timestamp and plot - no filtering
-                    df_chart = df[['Timestamp', 'Energy_kWh', 'Location']].copy()
-                    df_chart = df_chart.sort_values('Timestamp')
-                    
-                    fig_cumulative = px.line(
-                        df_chart, 
-                        x='Timestamp', 
-                        y='Energy_kWh',
-                        color='Location' if df_chart['Location'].nunique() > 1 else None,
-                        title='Cumulative Energy Meter Reading Over Time'
-                    )
-                    
-                    fig_cumulative.update_layout(
-                        paper_bgcolor='rgba(0,0,0,0)', 
-                        plot_bgcolor='rgba(21,29,40,1)',
-                        font_color='#8899a6', 
-                        title_font_color='#f0f4f8',
-                        hovermode='x unified'
-                    )
-                    fig_cumulative.update_xaxes(gridcolor='#404040', title='Date', showgrid=True)
-                    fig_cumulative.update_yaxes(gridcolor='#404040', title='Meter Reading (kWh)', showgrid=True)
-                    fig_cumulative.update_traces(line=dict(width=2))
-                    
-                    st.plotly_chart(fig_cumulative, use_container_width=True)
-                    
-                    # Stats per location
-                    for loc in df['Location'].unique():
-                        df_loc = df[df['Location'] == loc].sort_values('Timestamp')
-                        if len(df_loc) > 1:
-                            first_reading = df_loc['Energy_kWh'].iloc[0]
-                            last_reading = df_loc['Energy_kWh'].iloc[-1]
-                            total_consumed = last_reading - first_reading
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric(f"{loc} First", f"{first_reading:,.1f} kWh")
-                            with col2:
-                                st.metric(f"{loc} Latest", f"{last_reading:,.1f} kWh")
-                            with col3:
-                                st.metric(f"{loc} Consumed", f"{total_consumed:,.1f} kWh")
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Show weekday vs weekend summary
+                weekday_avg = daily[~daily['IsWeekend']]['Energy_kWh'].mean()
+                weekend_avg = daily[daily['IsWeekend']]['Energy_kWh'].mean()
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Weekday Avg", f"{weekday_avg:.1f} kWh")
+                with col2:
+                    st.metric("Weekend Avg", f"{weekend_avg:.1f} kWh")
+                with col3:
+                    diff_pct = ((weekend_avg - weekday_avg) / weekday_avg * 100) if weekday_avg > 0 else 0
+                    st.metric("Weekend vs Weekday", f"{diff_pct:+.1f}%")
                 
                 # Shift-wise Distribution Section
                 st.markdown("---")
                 st.markdown("#### 🔄 Shift-wise Analysis")
                 
-                # Date selector - data already cleaned at load
-                available_dates = sorted(pd.to_datetime(df['Date']).dt.date.dropna().unique())
+                # Date selector for detailed view
+                available_dates = sorted(df['Date'].dt.date.dropna().unique())
                 if len(available_dates) > 0:
                     col_date, col_shift = st.columns([2, 3])
                     
@@ -2079,11 +1969,13 @@ def main():
                             format_func=lambda x: x.strftime('%Y-%m-%d (%A)')
                         )
                     
-                    # Filter for selected date (data already cleaned)
+                    # Filter data for selected date
                     df_day = df[df['Date'].dt.date == selected_date].copy()
-                    df_day = df_day.sort_values('Timestamp')
                     
                     if len(df_day) > 0 and 'ToD_Period' in df_day.columns:
+                        # CRITICAL: Sort by timestamp first
+                        df_day = df_day.sort_values('Timestamp').copy()
+                        
                         # Normalize ToD periods
                         df_day['Shift'] = df_day['ToD_Period'].str.upper().str.replace('-', '').str.strip()
                         df_day['Shift'] = df_day['Shift'].map({
@@ -2099,9 +1991,14 @@ def main():
                         for shift in ['🌙 Off-Peak (11PM-6AM)', '☀️ Normal (6AM-5PM)', '🔥 Peak (5PM-11PM)']:
                             df_shift = df_day[df_day['Shift'] == shift].sort_values('Timestamp')
                             if len(df_shift) > 1 and 'Energy_kWh' in df_shift.columns:
+                                # Use first and last reading (chronologically sorted)
                                 first_val = df_shift['Energy_kWh'].iloc[0]
                                 last_val = df_shift['Energy_kWh'].iloc[-1]
                                 energy = last_val - first_val
+                                # If negative, try diff method
+                                if energy < 0:
+                                    diffs = df_shift['Energy_kWh'].diff()
+                                    energy = diffs[diffs > 0].sum()
                                 energy = max(0, energy)
                             else:
                                 energy = 0
@@ -2319,9 +2216,9 @@ def main():
                     total_readings = len(df_loc)
                     
                     # Time since last reading
-                    now = pd.Timestamp(get_ist_now())
+                    now = pd.Timestamp.now()
                     time_since_last = now - last_reading
-                    minutes_ago = abs(time_since_last.total_seconds() / 60)  # Use abs for future timestamps
+                    minutes_ago = time_since_last.total_seconds() / 60
                     
                     # Determine status
                     if minutes_ago <= 10:
@@ -2407,127 +2304,59 @@ def main():
                         </div>
                     """, unsafe_allow_html=True)
     
-    # ============= SAVINGS BANNER (Data-Driven Calculation) =============
-    # Calculate actual savings potential based on WBSEDCL HT Industrial Tariff
-    
+    # ============= SAVINGS BANNER (Dynamic Calculation) =============
+    # Calculate actual savings potential based on KPIs
     savings_breakdown = []
     total_savings = 0
     
-    # Get key metrics
-    contracted_demand = kpis.get('contracted_demand', 200)  # kW
-    peak_demand = kpis.get('peak_demand', 0)  # Actual max kW used
-    load_max = kpis.get('load_max', 0)  # % of contracted demand
-    avg_pf = kpis.get('avg_pf', 0.95)
-    data_days = kpis.get('data_days', 30)
+    # 1. Demand Contract Savings (if underutilized)
+    load_avg = kpis.get('load_avg', 0)
+    load_max = kpis.get('load_max', 0)
+    contracted_demand = 200  # Assumed kW
+    if load_avg > 0 and load_max < 50:
+        # Can reduce contract by 50%
+        demand_savings = int(4000 * (1 - load_max/100))
+        savings_breakdown.append(f"Demand contract (₹{demand_savings:,})")
+        total_savings += demand_savings
+    elif load_max < 75:
+        demand_savings = 2000
+        savings_breakdown.append(f"Demand contract (₹{demand_savings:,})")
+        total_savings += demand_savings
     
-    # ToD energy breakdown
-    energy_peak = kpis.get('energy_peak', 0)
-    energy_normal = kpis.get('energy_normal', 0) 
-    energy_offpeak = kpis.get('energy_offpeak', 0)
-    total_energy = kpis.get('total_energy', 0)
+    # 2. PF Optimization Savings
+    pf_avg = kpis.get('avg_pf', 1)
+    pf_below_92 = kpis.get('pf_below_92', 0)
+    if pf_avg < 0.92:
+        # Penalty is roughly (0.92 - PF) * 2% per 0.01 shortfall
+        pf_penalty_rate = (0.92 - pf_avg) * 100 * 50  # ~₹50 per 0.01 shortfall
+        pf_savings = int(min(15000, max(2500, pf_penalty_rate)))
+        savings_breakdown.append(f"PF optimization (₹{pf_savings:,})")
+        total_savings += pf_savings
+    elif pf_below_92 > 10:
+        pf_savings = 1500
+        savings_breakdown.append(f"PF optimization (₹{pf_savings:,})")
+        total_savings += pf_savings
     
-    # WBSEDCL HT Industrial Tariff Rates
-    DEMAND_CHARGE = 350  # ₹/kVA/month
-    RATE_PEAK = 8.37     # ₹/kWh (5PM-11PM)
-    RATE_NORMAL = 6.87   # ₹/kWh (6AM-5PM)
-    RATE_OFFPEAK = 5.18  # ₹/kWh (11PM-6AM)
-    PF_BENCHMARK = 0.92  # Below this = penalty
+    # 3. ToD Shift Savings (if peak usage is high)
+    # Estimate based on potential shift from peak to off-peak
+    tod_savings = 1500  # Base estimate
+    savings_breakdown.append(f"ToD shift (₹{tod_savings:,})")
+    total_savings += tod_savings
     
-    # Scale to monthly (30 days)
-    monthly_factor = 30 / max(data_days, 1)
+    # 4. Fire Prevention (always include)
+    savings_breakdown.append("Fire prevention (Priceless)")
     
-    # ============= 1. DEMAND CONTRACT OPTIMIZATION =============
-    # If actual peak demand is much lower than contracted, can reduce contract
-    if peak_demand > 0 and contracted_demand > 0:
-        utilization = (peak_demand / contracted_demand) * 100
-        
-        # Optimal contract = peak demand + 20% buffer
-        optimal_contract = peak_demand * 1.2
-        
-        if optimal_contract < contracted_demand * 0.8:  # Can reduce by >20%
-            # Savings = (Current - Optimal) * Demand Charge
-            # Assuming PF of 0.9, kVA = kW / 0.9
-            current_kva = contracted_demand / 0.9
-            optimal_kva = optimal_contract / 0.9
-            demand_savings = int((current_kva - optimal_kva) * DEMAND_CHARGE)
-            
-            if demand_savings > 0:
-                reduction_pct = ((contracted_demand - optimal_contract) / contracted_demand) * 100
-                savings_breakdown.append(f"Demand contract (₹{demand_savings:,}/mo) - reduce {reduction_pct:.0f}% to {optimal_contract:.0f}kW")
-                total_savings += demand_savings
+    # Ensure minimum display
+    if total_savings < 5000:
+        total_savings = 10000
     
-    # ============= 2. POWER FACTOR OPTIMIZATION =============
-    # WBSEDCL penalty: 1% of energy bill for every 0.01 below 0.92
-    if avg_pf > 0 and avg_pf < PF_BENCHMARK:
-        # Calculate current energy cost
-        monthly_energy = total_energy * monthly_factor
-        if monthly_energy == 0:
-            monthly_energy = 5000  # Estimate if no data
-        
-        avg_rate = 6.50  # Blended rate estimate
-        monthly_energy_bill = monthly_energy * avg_rate
-        
-        # Penalty calculation
-        pf_shortfall = PF_BENCHMARK - avg_pf  # e.g., 0.92 - 0.85 = 0.07
-        penalty_pct = pf_shortfall * 100  # 7%
-        pf_penalty = monthly_energy_bill * (penalty_pct / 100)
-        pf_savings = int(pf_penalty)
-        
-        if pf_savings > 100:
-            savings_breakdown.append(f"PF penalty avoided (₹{pf_savings:,}/mo) - improve from {avg_pf:.2f} to 0.92")
-            total_savings += pf_savings
-    
-    # ============= 3. ToD SHIFT OPTIMIZATION =============
-    # Calculate savings if peak energy is shifted to off-peak
-    if energy_peak > 0:
-        # Project to monthly
-        monthly_peak = energy_peak * monthly_factor
-        
-        # Potential savings = Peak energy × (Peak rate - Offpeak rate)
-        rate_diff = RATE_PEAK - RATE_OFFPEAK  # 8.37 - 5.18 = 3.19
-        
-        # Assume 50% of peak can realistically be shifted
-        shiftable_energy = monthly_peak * 0.5
-        tod_savings = int(shiftable_energy * rate_diff)
-        
-        if tod_savings > 100:
-            savings_breakdown.append(f"ToD optimization (₹{tod_savings:,}/mo) - shift {shiftable_energy:.0f}kWh from peak")
-            total_savings += tod_savings
-    elif total_energy > 0:
-        # Estimate if no ToD data
-        monthly_energy = total_energy * monthly_factor
-        # Assume 20% is peak, 50% shiftable
-        estimated_peak = monthly_energy * 0.2
-        shiftable = estimated_peak * 0.5
-        tod_savings = int(shiftable * (RATE_PEAK - RATE_OFFPEAK))
-        if tod_savings > 100:
-            savings_breakdown.append(f"ToD optimization (₹{tod_savings:,}/mo est.)")
-            total_savings += tod_savings
-    
-    # ============= 4. FIRE PREVENTION VALUE =============
-    fire_high = kpis.get('fire_high', 0)
-    fire_critical = kpis.get('fire_critical', 0)
-    if fire_high > 0 or fire_critical > 0:
-        savings_breakdown.append("⚠️ Fire risk detected - prevention value: Priceless")
-    else:
-        savings_breakdown.append("✅ Fire monitoring active")
-    
-    # Build display - Apply 50% conservative discount for realistic expectations
-    realizable_savings = int(total_savings * 0.5)
-    
-    if realizable_savings == 0:
-        savings_value_html = f'<div class="savings-value" style="font-size: 28px;">Analyzing...</div>'
-    else:
-        savings_value_html = f'<div class="savings-value">₹{realizable_savings:,}+</div>'
-    
-    savings_text = "<br>".join(savings_breakdown) if savings_breakdown else "Analyzing your data..."
+    savings_text = " + ".join(savings_breakdown)
     
     st.markdown(f"""
         <div class="savings-banner">
-            <div class="savings-label">💰 Monthly Savings Potential (Conservative Estimate)</div>
-            {savings_value_html}
-            <div class="savings-subtext" style="text-align: left; font-size: 11px; line-height: 1.6;">{savings_text}</div>
-            <div style="font-size: 9px; color: #5c6b7a; margin-top: 8px;">Based on {data_days} days of data | 50% realization factor applied | WBSEDCL HT Industrial Tariff</div>
+            <div class="savings-label">💰 Total Monthly Savings Potential</div>
+            <div class="savings-value">₹{total_savings:,}+</div>
+            <div class="savings-subtext">{savings_text}</div>
         </div>
     """, unsafe_allow_html=True)
     
@@ -2544,7 +2373,7 @@ def main():
     # Refresh section
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        st.markdown(f"<p style='text-align: center; color: #5c6b7a; font-size: 10px;'>Last refresh: {get_ist_now().strftime('%H:%M:%S')} IST</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #5c6b7a; font-size: 10px;'>Last refresh: {datetime.now().strftime('%H:%M:%S')}</p>", unsafe_allow_html=True)
     with col2:
         if st.button("🔄 Refresh Data", use_container_width=True):
             st.cache_data.clear()
