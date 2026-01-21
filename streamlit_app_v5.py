@@ -994,27 +994,8 @@ def calculate_kpis(df):
     
     kpis['peak_demand'] = safe_get(df, 'kW_Total', 0, 'max')
     kpis['max_demand_recorded'] = safe_get(df, 'Max_Demand_kW', 0, 'max')
+    kpis['avg_pf'] = safe_get(df, 'PF_Avg', 0, 'mean')
     kpis['run_hours'] = safe_get(df, 'Run_Hours', 0, 'max')
-    
-    # Power Factor - FILTERED to exclude idle/startup readings
-    # Raw mean includes zeros from idle periods which gives misleading low PF
-    # Filter: Current > 1A AND PF > 0 for meaningful readings only
-    kpis['avg_pf'] = 0
-    if 'PF_Avg' in df.columns:
-        try:
-            pf_series = pd.to_numeric(df['PF_Avg'], errors='coerce')
-            if 'Current_Total' in df.columns:
-                current_series = pd.to_numeric(df['Current_Total'], errors='coerce')
-                # Filter: Current > 1A (equipment running) AND PF > 0 (valid reading)
-                valid_pf = pf_series[(current_series > 1.0) & (pf_series > 0)]
-            else:
-                # Fallback: just exclude zeros
-                valid_pf = pf_series[pf_series > 0]
-            
-            if len(valid_pf) > 0:
-                kpis['avg_pf'] = valid_pf.mean()
-        except Exception:
-            kpis['avg_pf'] = safe_get(df, 'PF_Avg', 0, 'mean')  # Fallback to raw
     
     # Voltage unbalance
     kpis['v_unbalance_avg'] = safe_get(df, 'Voltage_Unbalance_Pct', 0, 'mean')
@@ -1069,14 +1050,13 @@ def calculate_kpis(df):
             df_pf = df.copy()
             df_pf['PF_Abs'] = pd.to_numeric(df_pf['PF_Avg'], errors='coerce').abs()
             
-            # Filter out noisy data: require Current > 1A AND PF > 0 for valid reading
-            # PF = 0 with high current is a meter glitch, not real data
+            # Filter out noisy data: require Current > 1A for valid PF reading
+            # This excludes startup transients and idle states
             if 'Current_Total' in df_pf.columns:
                 current_series = pd.to_numeric(df_pf['Current_Total'], errors='coerce')
-                # IMPORTANT: Filter out PF=0 glitches (impossible to have current with zero PF)
-                valid_mask = (current_series > 1.0) & (df_pf['PF_Abs'] > 0) & (df_pf['PF_Abs'].notna())
+                valid_mask = (current_series > 1.0) & (df_pf['PF_Abs'].notna())
             else:
-                valid_mask = (df_pf['PF_Abs'] > 0) & (df_pf['PF_Abs'].notna())
+                valid_mask = df_pf['PF_Abs'].notna()
             
             df_pf_valid = df_pf[valid_mask].copy()
             kpis['pf_valid_readings'] = len(df_pf_valid)
@@ -1089,10 +1069,10 @@ def calculate_kpis(df):
                     kpis['pf_below_92'] = (pf_series < 0.92).sum() / len(pf_series) * 100
                     kpis['pf_below_90'] = (pf_series < 0.90).sum() / len(pf_series) * 100
                     kpis['pf_below_85'] = (pf_series < 0.85).sum() / len(pf_series) * 100
-                    kpis['pf_min'] = pf_series.min()  # Now excludes zero glitches
+                    kpis['pf_min'] = pf_series.min()
                 
                 # Detect sustained low PF (2+ consecutive readings below 0.90)
-                # Data is already filtered to exclude PF=0 glitches
+                # Changed from 3 to 2 for faster APFC response detection (~10 min)
                 df_pf_valid = df_pf_valid.sort_values('Timestamp').reset_index(drop=True)
                 df_pf_valid['PF_Low_90'] = df_pf_valid['PF_Abs'] < 0.90
                 df_pf_valid['PF_Low_92'] = df_pf_valid['PF_Abs'] < 0.92
@@ -1102,7 +1082,7 @@ def calculate_kpis(df):
                 
                 # Count sustained events (2+ consecutive readings = ~10+ min at 5-min intervals)
                 sustained_groups = df_pf_valid[df_pf_valid['PF_Low_90']].groupby('PF_Low_Group').size()
-                sustained_alerts = sustained_groups[sustained_groups >= 2]
+                sustained_alerts = sustained_groups[sustained_groups >= 2]  # Changed from 3 to 2
                 
                 kpis['pf_sustained_alerts'] = len(sustained_alerts)
                 kpis['pf_sustained_readings'] = sustained_alerts.sum() if len(sustained_alerts) > 0 else 0
@@ -1298,7 +1278,7 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     elements.append(Spacer(1, 20))
     
     # ============= EXECUTIVE SUMMARY =============
-    elements.append(Paragraph("Executive Summary", heading_style))
+    elements.append(Paragraph("📊 Executive Summary", heading_style))
     
     total_energy = kpis.get('total_energy', 0)
     total_cost = kpis.get('total_cost', total_energy * 6.87)
@@ -1306,12 +1286,12 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     summary_data = [
         ['Metric', 'Value', 'Status'],
         ['Total Energy', f"{total_energy:,.1f} kWh", ''],
-        ['Estimated Cost', f"Rs.{total_cost:,.0f}", ''],
+        ['Estimated Cost', f"₹{total_cost:,.0f}", ''],
         ['Peak Demand', f"{kpis.get('peak_demand', 0):.1f} kW", ''],
         ['Max Demand (Meter)', f"{kpis.get('max_demand_recorded', 0):.1f} kW", ''],
         ['Contracted Demand', f"{kpis.get('contracted_demand', 200)} kW", ''],
-        ['Avg Power Factor', f"{kpis.get('avg_pf', 0):.3f}", 'LOW' if kpis.get('avg_pf', 1) < 0.92 else 'Good'],
-        ['Load Utilization', f"{kpis.get('load_avg', 0):.1f}%", 'LOW' if kpis.get('load_avg', 0) < 30 else 'Normal'],
+        ['Avg Power Factor', f"{kpis.get('avg_pf', 0):.3f}", '⚠️ Low' if kpis.get('avg_pf', 1) < 0.92 else '✓ Good'],
+        ['Load Utilization', f"{kpis.get('load_avg', 0):.1f}%", '⚠️ Low' if kpis.get('load_avg', 0) < 30 else '✓ Normal'],
         ['Run Hours', f"{kpis.get('run_hours', 0):.1f} hrs", ''],
     ]
     
@@ -1344,11 +1324,11 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     pct_offpeak = (energy_offpeak / total_tod * 100) if total_tod > 0 else 0
     
     tod_data = [
-        ['Period', 'Time', 'Energy (kWh)', 'Share %', 'Rate (Rs)', 'Cost (Rs)'],
-        ['Peak', '5PM - 11PM', f"{energy_peak:,.1f}", f"{pct_peak:.1f}%", '8.37', f"Rs.{energy_peak * 8.37:,.0f}"],
-        ['Normal', '6AM - 5PM', f"{energy_normal:,.1f}", f"{pct_normal:.1f}%", '6.87', f"Rs.{energy_normal * 6.87:,.0f}"],
-        ['Off-Peak', '11PM - 6AM', f"{energy_offpeak:,.1f}", f"{pct_offpeak:.1f}%", '5.18', f"Rs.{energy_offpeak * 5.18:,.0f}"],
-        ['TOTAL', '', f"{total_tod:,.1f}", '100%', '', f"Rs.{total_cost:,.0f}"],
+        ['Period', 'Time', 'Energy (kWh)', 'Share %', 'Rate (₹)', 'Cost (₹)'],
+        ['Peak', '5PM - 11PM', f"{energy_peak:,.1f}", f"{pct_peak:.1f}%", '8.37', f"₹{energy_peak * 8.37:,.0f}"],
+        ['Normal', '6AM - 5PM', f"{energy_normal:,.1f}", f"{pct_normal:.1f}%", '6.87', f"₹{energy_normal * 6.87:,.0f}"],
+        ['Off-Peak', '11PM - 6AM', f"{energy_offpeak:,.1f}", f"{pct_offpeak:.1f}%", '5.18', f"₹{energy_offpeak * 5.18:,.0f}"],
+        ['TOTAL', '', f"{total_tod:,.1f}", '100%', '', f"₹{total_cost:,.0f}"],
     ]
     
     tod_table = Table(tod_data, colWidths=[2.5*cm, 2.5*cm, 3*cm, 2*cm, 2*cm, 3*cm])
@@ -1369,7 +1349,7 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     elements.append(Spacer(1, 15))
     
     # ============= FIRE RISK MONITOR =============
-    elements.append(Paragraph("Fire Risk Monitor", heading_style))
+    elements.append(Paragraph("🔥 Fire Risk Monitor", heading_style))
     
     fire_normal = kpis.get('fire_normal', 0)
     fire_warning = kpis.get('fire_warning', 0)
@@ -1380,10 +1360,10 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     fire_data = [
         ['Metric', 'Value', 'Status'],
         ['Avg Neutral Current', f"{kpis.get('neutral_avg', 0):.2f} A", ''],
-        ['Peak Neutral Current', f"{kpis.get('neutral_max', 0):.2f} A", 'HIGH' if kpis.get('neutral_max', 0) > 10 else 'Safe'],
-        ['Elevated Events (>5A)', f"{kpis.get('neutral_risk', 0):,}", '!' if kpis.get('neutral_risk', 0) > 100 else ''],
+        ['Peak Neutral Current', f"{kpis.get('neutral_max', 0):.2f} A", '⚠️ High' if kpis.get('neutral_max', 0) > 10 else '✓ Safe'],
+        ['Elevated Events (>5A)', f"{kpis.get('neutral_risk', 0):,}", '⚠️' if kpis.get('neutral_risk', 0) > 100 else ''],
         ['', '', ''],
-        ['Safe (Normal)', f"{fire_normal:,} ({fire_normal/fire_total*100:.0f}%)" if fire_total > 0 else "0", 'OK'],
+        ['Safe (Normal)', f"{fire_normal:,} ({fire_normal/fire_total*100:.0f}%)" if fire_total > 0 else "0", '🟢'],
         ['Watch (Warning)', f"{fire_warning:,} ({fire_warning/fire_total*100:.0f}%)" if fire_total > 0 else "0", '🟡'],
         ['High Risk', f"{fire_high:,} ({fire_high/fire_total*100:.0f}%)" if fire_total > 0 else "0", '🟠'],
         ['Critical', f"{fire_critical:,} ({fire_critical/fire_total*100:.0f}%)" if fire_total > 0 else "0", '🔴' if fire_critical > 0 else ''],
@@ -1409,7 +1389,7 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     elements.append(Spacer(1, 15))
     
     # ============= PF PENALTY ALERT =============
-    elements.append(Paragraph("Power Factor Analysis", heading_style))
+    elements.append(Paragraph("⚠️ Power Factor Analysis", heading_style))
     
     pf_events = kpis.get('pf_events', [])
     sustained_alerts = kpis.get('pf_sustained_alerts', 0)
@@ -1521,7 +1501,7 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
         ['Metric', 'Value', 'Insight'],
         ['Average Load', f"{kpis.get('load_avg', 0):.1f}%", 'Underutilized' if kpis.get('load_avg', 0) < 30 else 'Optimal' if kpis.get('load_avg', 0) < 80 else 'High'],
         ['Maximum Load', f"{kpis.get('load_max', 0):.1f}%", ''],
-        ['Idle Time (<10% load)', f"{kpis.get('idle_time_pct', 0):.1f}%", 'HIGH' if kpis.get('idle_time_pct', 0) > 30 else ''],
+        ['Idle Time (<10% load)', f"{kpis.get('idle_time_pct', 0):.1f}%", '⚠️ High' if kpis.get('idle_time_pct', 0) > 30 else ''],
         ['Contracted Demand', f"{kpis.get('contracted_demand', 200)} kW", ''],
         ['Peak Demand Recorded', f"{kpis.get('peak_demand', 0):.1f} kW", f"{kpis.get('peak_demand', 0)/kpis.get('contracted_demand', 200)*100:.0f}% of contract" if kpis.get('contracted_demand', 200) > 0 else ''],
     ]
@@ -1542,65 +1522,48 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     elements.append(Spacer(1, 15))
     
     # ============= SAVINGS POTENTIAL =============
-    elements.append(Paragraph("Savings & Benefits Summary", heading_style))
+    elements.append(Paragraph("💰 Savings Potential", heading_style))
     
     # Calculate savings (MATCHING main dashboard logic)
     # WBSEDCL HT Industrial Tariff Rates
     DEMAND_CHARGE = 350  # ₹/kVA/month
     RATE_PEAK = 8.37     # ₹/kWh
     RATE_OFFPEAK = 5.18  # ₹/kWh
-    PF_PENALTY_THRESHOLD = 0.92
-    PF_REBATE_THRESHOLD = 0.95
+    PF_BENCHMARK = 0.92
     
     monthly_factor = 30 / max(num_days, 1)
-    monthly_energy = total_energy * monthly_factor if total_energy > 0 else 5000
-    avg_rate = 6.50
-    monthly_energy_bill = monthly_energy * avg_rate
-    
     total_savings = 0
-    rebate_earned = 0
     savings_items = []
     
     contracted_demand = kpis.get('contracted_demand', 200)
     peak_demand = kpis.get('peak_demand', 0)
     avg_pf = kpis.get('avg_pf', 0.92)
+    load_avg = kpis.get('load_avg', 0)
     
     # 1. DEMAND CONTRACT OPTIMIZATION
     if peak_demand > 0 and contracted_demand > 0:
         optimal_contract = peak_demand * 1.2
-        utilization = (peak_demand / contracted_demand) * 100
         if optimal_contract < contracted_demand * 0.8:
             current_kva = contracted_demand / 0.9
             optimal_kva = optimal_contract / 0.9
             demand_savings = int((current_kva - optimal_kva) * DEMAND_CHARGE)
             if demand_savings > 0:
                 total_savings += demand_savings
-                savings_items.append(['Demand Contract', f"Rs.{demand_savings:,}/mo", f"Reduce to {optimal_contract:.0f}kW"])
-        else:
-            savings_items.append(['Demand Contract', 'Well-sized', f"{utilization:.0f}% utilized"])
+                savings_items.append(['Demand Contract', f"₹{demand_savings:,}/mo", f"Reduce to {optimal_contract:.0f}kW"])
     
-    # 2. POWER FACTOR - PENALTY OR REBATE
-    if avg_pf > 0:
-        if avg_pf < PF_PENALTY_THRESHOLD:
-            # PENALTY zone
-            pf_shortfall = PF_PENALTY_THRESHOLD - avg_pf
-            penalty_steps = int(pf_shortfall * 100)
-            penalty_pct = penalty_steps * 1.0
-            pf_penalty = int(monthly_energy_bill * (penalty_pct / 100))
-            if pf_penalty > 100:
-                total_savings += pf_penalty
-                savings_items.append(['PF Penalty Avoided', f"Rs.{pf_penalty:,}/mo", f"Improve {avg_pf:.2f} to 0.92"])
-        elif avg_pf >= PF_REBATE_THRESHOLD:
-            # REBATE zone
-            pf_surplus = avg_pf - PF_REBATE_THRESHOLD
-            rebate_steps = int(pf_surplus * 100)
-            rebate_pct = rebate_steps * 0.5
-            pf_rebate = int(monthly_energy_bill * (rebate_pct / 100))
-            if pf_rebate > 0:
-                rebate_earned += pf_rebate
-                savings_items.append(['PF Rebate Earned', f"Rs.{pf_rebate:,}/mo", f"PF {avg_pf:.2f} > 0.95"])
-        else:
-            savings_items.append(['PF Status', 'Good', f"PF {avg_pf:.2f} (no penalty)"])
+    # 2. POWER FACTOR OPTIMIZATION
+    if avg_pf > 0 and avg_pf < PF_BENCHMARK:
+        monthly_energy = total_energy * monthly_factor
+        if monthly_energy == 0:
+            monthly_energy = 5000
+        avg_rate = 6.50
+        monthly_energy_bill = monthly_energy * avg_rate
+        pf_shortfall = PF_BENCHMARK - avg_pf
+        penalty_pct = pf_shortfall * 100
+        pf_penalty = int(monthly_energy_bill * (penalty_pct / 100))
+        if pf_penalty > 100:
+            total_savings += pf_penalty
+            savings_items.append(['PF Penalty Avoided', f"₹{pf_penalty:,}/mo", f"Improve {avg_pf:.2f} → 0.92"])
     
     # 3. ToD OPTIMIZATION
     if energy_peak > 0:
@@ -1609,45 +1572,19 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
         tod_savings = int(shiftable * (RATE_PEAK - RATE_OFFPEAK))
         if tod_savings > 100:
             total_savings += tod_savings
-            savings_items.append(['ToD Optimization', f"Rs.{tod_savings:,}/mo", f"Shift {shiftable:.0f}kWh off-peak"])
-        else:
-            savings_items.append(['ToD Usage', 'Low peak', f"{energy_peak:.0f}kWh peak"])
+            savings_items.append(['ToD Optimization', f"₹{tod_savings:,}/mo", f"Shift {shiftable:.0f}kWh off-peak"])
     
-    # 4. MAX DEMAND STATUS
-    max_demand_recorded = kpis.get('max_demand_recorded', 0)
-    if max_demand_recorded > 0 and contracted_demand > 0:
-        md_util = (max_demand_recorded / contracted_demand) * 100
-        if md_util > 90:
-            savings_items.append(['Max Demand', 'ALERT', f"{max_demand_recorded:.0f}kW ({md_util:.0f}%)"])
-        else:
-            savings_items.append(['Max Demand', 'Safe', f"{max_demand_recorded:.0f}kW ({md_util:.0f}%)"])
-    
-    # 5. FIRE SAFETY STATUS
-    fire_critical = kpis.get('fire_critical', 0)
-    fire_high = kpis.get('fire_high', 0)
-    if fire_critical > 0:
-        savings_items.append(['Fire Safety', 'CRITICAL', 'Immediate inspection needed'])
-    elif fire_high > 0:
-        savings_items.append(['Fire Safety', 'Warning', 'Inspection recommended'])
-    else:
-        savings_items.append(['Fire Safety', 'Normal', 'Monitoring active'])
-    
-    # Apply 50% realization factor on potential savings, rebates at full
+    # Apply 50% realization factor
     realizable = int(total_savings * 0.5)
-    total_benefit = realizable + rebate_earned
-    period_total = int(total_benefit * num_days / 30)
-    annual_total = total_benefit * 12
+    period_savings = int(realizable * num_days / 30)
+    annual_savings = realizable * 12
     
     savings_summary = [
-        ['Time Frame', 'Total Benefit'],
-        [f'This Period ({num_days} days)', f'Rs.{period_total:,}'],
-        ['Monthly', f'Rs.{total_benefit:,}'],
-        ['Annual Projection', f'Rs.{annual_total:,}'],
+        ['Time Frame', 'Amount'],
+        [f'This Period ({num_days} days)', f'₹{period_savings:,}'],
+        ['Monthly', f'₹{realizable:,}'],
+        ['Annual', f'₹{annual_savings:,}'],
     ]
-    
-    # Add sub-note if there's both savings and rebate
-    if realizable > 0 and rebate_earned > 0:
-        savings_summary.append(['', f'(Savings: ₹{realizable:,} + Rebate: ₹{rebate_earned:,})'])
     
     savings_table = Table(savings_summary, colWidths=[6*cm, 6*cm])
     savings_table.setStyle(TableStyle([
@@ -1687,18 +1624,18 @@ def generate_report_pdf(df, kpis, report_type, shed_label):
     elements.append(Spacer(1, 12))
     
     # ============= RECOMMENDATIONS =============
-    elements.append(Paragraph("Recommendations", heading_style))
+    elements.append(Paragraph("💡 Recommendations", heading_style))
     
     recommendations = []
     if kpis.get('avg_pf', 1) < 0.92:
-        recommendations.append(['Power Factor', 'Service APFC panel, check capacitor banks', 'HIGH', 'Rs.5,000-15,000/mo'])
+        recommendations.append(['🔧 Power Factor', 'Service APFC panel, check capacitor banks', 'HIGH', '₹5,000-15,000/mo'])
     if kpis.get('fire_critical', 0) > 0:
-        recommendations.append(['Fire Safety', 'URGENT: Inspect electrical connections', 'CRITICAL', 'Safety'])
+        recommendations.append(['🔥 Fire Safety', 'URGENT: Inspect electrical connections', 'CRITICAL', 'Safety'])
     if kpis.get('load_avg', 100) < 30:
-        recommendations.append(['Contract', 'Renegotiate to lower contracted demand', 'MEDIUM', 'Rs.10,000-20,000/mo'])
+        recommendations.append(['📊 Contract', 'Renegotiate to lower contracted demand', 'MEDIUM', '₹10,000-20,000/mo'])
     if kpis.get('i_unbalance_avg', 0) > 15:
         recommendations.append(['⚡ Load Balance', 'Redistribute loads across phases', 'MEDIUM', 'Equipment Life'])
-    recommendations.append(['🕐 ToD Shift', 'Move heavy loads to off-peak hours', 'LOW', 'Rs.1,500-3,000/mo'])
+    recommendations.append(['🕐 ToD Shift', 'Move heavy loads to off-peak hours', 'LOW', '₹1,500-3,000/mo'])
     
     rec_data = [['Area', 'Recommendation', 'Priority', 'Impact']] + recommendations
     
@@ -2399,20 +2336,17 @@ def main():
                     use_container_width=True
                 )
                 st.sidebar.success(f"✓ PDF Report ready!")
-            except Exception as e:
-                # Fallback to CSV if PDF generation fails
-                try:
-                    csv_content = generate_report_csv(report_df, report_kpis, report_type, shed_label)
-                    st.sidebar.download_button(
-                        label="📥 Download Report (CSV)",
-                        data=csv_content,
-                        file_name=f"vireon_report_{report_type.lower().replace(' ', '_')}_{get_ist_now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-                    st.sidebar.warning(f"PDF unavailable, CSV ready")
-                except Exception:
-                    st.sidebar.error("Report generation failed")
+            except ImportError:
+                # Fallback to CSV if reportlab not available
+                csv_content = generate_report_csv(report_df, report_kpis, report_type, shed_label)
+                st.sidebar.download_button(
+                    label="📥 Download Report (CSV)",
+                    data=csv_content,
+                    file_name=f"vireon_report_{report_type.lower().replace(' ', '_')}_{get_ist_now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                st.sidebar.success(f"✓ Report ready!")
         else:
             st.sidebar.error("No data for selected range.")
     
@@ -3161,7 +3095,7 @@ def main():
                                 'Readings': total_readings,
                                 'Energy (kWh)': total_energy,
                                 'Rate (₹/kWh)': rate,
-                                'Cost (Rs)': cost
+                                'Cost (₹)': cost
                             })
                         
                         shift_df = pd.DataFrame(shift_summary)
@@ -3204,14 +3138,14 @@ def main():
                                     <div class="kpi-card" style="padding: 10px;">
                                         <div class="kpi-title">{row['Shift']}</div>
                                         <div class="kpi-value">{row['Energy (kWh)']:.1f} kWh</div>
-                                        <div class="kpi-label">₹{row['Cost (Rs)']:.0f} @ ₹{row['Rate (₹/kWh)']}/kWh</div>
+                                        <div class="kpi-label">₹{row['Cost (₹)']:.0f} @ ₹{row['Rate (₹/kWh)']}/kWh</div>
                                         <div class="kpi-insight">{row['Readings']} readings</div>
                                     </div>
                                 """, unsafe_allow_html=True)
                         
                         # Day total
                         total_energy = shift_df['Energy (kWh)'].sum()
-                        total_cost = shift_df['Cost (Rs)'].sum()
+                        total_cost = shift_df['Cost (₹)'].sum()
                         st.markdown(f"**Day Total:** {total_energy:.1f} kWh | ₹{total_cost:.0f}")
                     else:
                         st.info("No ToD data available for this date.")
@@ -3561,7 +3495,7 @@ def main():
                     <div class="rec-action">→ {'Reconfigure APFC panel staging for lower thresholds' if sustained_alerts > 0 else 'Continue monitoring - transients filtered'}</div>
                     <div class="rec-savings">
                         <span class="rec-savings-label">Monthly Savings:</span>
-                        <span class="rec-savings-value">{'Rs.2,500+' if sustained_alerts > 0 else '✓ Optimized'}</span>
+                        <span class="rec-savings-value">{'₹2,500+' if sustained_alerts > 0 else '✓ Optimized'}</span>
                     </div>
                 </div>
             </div>
@@ -3611,10 +3545,10 @@ def main():
                     first_reading = df_loc['Timestamp'].min()
                     total_readings = len(df_loc)
                     
-                    # Time since last reading - use IST timezone
-                    now = pd.Timestamp(get_ist_now())
+                    # Time since last reading
+                    now = pd.Timestamp.now()
                     time_since_last = now - last_reading
-                    minutes_ago = max(0, time_since_last.total_seconds() / 60)  # Ensure non-negative
+                    minutes_ago = time_since_last.total_seconds() / 60
                     
                     # Determine status
                     if minutes_ago <= 10:
@@ -3705,7 +3639,6 @@ def main():
     
     savings_breakdown = []
     total_savings = 0
-    rebate_earned = 0  # Track rebates separately (money you're already saving)
     
     # Get key metrics
     contracted_demand = kpis.get('contracted_demand', 200)  # kW
@@ -3725,70 +3658,59 @@ def main():
     RATE_PEAK = 8.37     # ₹/kWh (5PM-11PM)
     RATE_NORMAL = 6.87   # ₹/kWh (6AM-5PM)
     RATE_OFFPEAK = 5.18  # ₹/kWh (11PM-6AM)
-    PF_PENALTY_THRESHOLD = 0.92  # Below this = penalty
-    PF_REBATE_THRESHOLD = 0.95   # Above this = rebate
+    PF_BENCHMARK = 0.92  # Below this = penalty
     
     # Scale to monthly (30 days)
     monthly_factor = 30 / max(data_days, 1)
-    monthly_energy = total_energy * monthly_factor if total_energy > 0 else 5000
-    avg_rate = 6.50  # Blended rate estimate
-    monthly_energy_bill = monthly_energy * avg_rate
     
     # ============= 1. DEMAND CONTRACT OPTIMIZATION =============
     # If actual peak demand is much lower than contracted, can reduce contract
-    demand_status = "⚪"
     if peak_demand > 0 and contracted_demand > 0:
         utilization = (peak_demand / contracted_demand) * 100
-        optimal_contract = peak_demand * 1.2  # 20% buffer
+        
+        # Optimal contract = peak demand + 20% buffer
+        optimal_contract = peak_demand * 1.2
         
         if optimal_contract < contracted_demand * 0.8:  # Can reduce by >20%
+            # Savings = (Current - Optimal) * Demand Charge
+            # Assuming PF of 0.9, kVA = kW / 0.9
             current_kva = contracted_demand / 0.9
             optimal_kva = optimal_contract / 0.9
             demand_savings = int((current_kva - optimal_kva) * DEMAND_CHARGE)
             
             if demand_savings > 0:
-                demand_status = "💰"
                 reduction_pct = ((contracted_demand - optimal_contract) / contracted_demand) * 100
-                savings_breakdown.append(f"{demand_status} Demand contract (₹{demand_savings:,}/mo) - reduce {reduction_pct:.0f}% to {optimal_contract:.0f}kW")
+                savings_breakdown.append(f"Demand contract (₹{demand_savings:,}/mo) - reduce {reduction_pct:.0f}% to {optimal_contract:.0f}kW")
                 total_savings += demand_savings
-            else:
-                savings_breakdown.append(f"{demand_status} Demand contract: Well-sized ({utilization:.0f}% utilized)")
-        else:
-            savings_breakdown.append(f"{demand_status} Demand contract: Well-sized ({utilization:.0f}% utilized)")
     
-    # ============= 2. POWER FACTOR - PENALTY OR REBATE =============
-    pf_status = "⚪"
-    if avg_pf > 0:
-        if avg_pf < PF_PENALTY_THRESHOLD:
-            # PENALTY zone (PF < 0.92)
-            pf_status = "💰"
-            pf_shortfall = PF_PENALTY_THRESHOLD - avg_pf
-            penalty_steps = int(pf_shortfall * 100)  # Each 0.01 = 1 step
-            penalty_pct = penalty_steps * 1.0  # 1% per 0.01
-            pf_penalty = int(monthly_energy_bill * (penalty_pct / 100))
-            
-            if pf_penalty > 100:
-                savings_breakdown.append(f"{pf_status} PF penalty avoided (₹{pf_penalty:,}/mo) - improve from {avg_pf:.2f} to 0.92")
-                total_savings += pf_penalty
-        elif avg_pf >= PF_REBATE_THRESHOLD:
-            # REBATE zone (PF > 0.95) - you're EARNING money!
-            pf_status = "✅"
-            pf_surplus = avg_pf - PF_REBATE_THRESHOLD
-            rebate_steps = int(pf_surplus * 100)  # Each 0.01 above 0.95
-            rebate_pct = rebate_steps * 0.5  # 0.5% per 0.01 above 0.95
-            pf_rebate = int(monthly_energy_bill * (rebate_pct / 100))
-            
-            if pf_rebate > 0:
-                savings_breakdown.append(f"{pf_status} PF rebate earned (₹{pf_rebate:,}/mo) - PF {avg_pf:.2f} > 0.95 ({rebate_pct:.1f}% rebate)")
-                rebate_earned += pf_rebate
-        else:
-            # Between 0.92 and 0.95 - no penalty, no rebate
-            savings_breakdown.append(f"⚪ PF status: Good ({avg_pf:.2f}) - no penalty")
+    # ============= 2. POWER FACTOR OPTIMIZATION =============
+    # WBSEDCL penalty: 1% of energy bill for every 0.01 below 0.92
+    if avg_pf > 0 and avg_pf < PF_BENCHMARK:
+        # Calculate current energy cost
+        monthly_energy = total_energy * monthly_factor
+        if monthly_energy == 0:
+            monthly_energy = 5000  # Estimate if no data
+        
+        avg_rate = 6.50  # Blended rate estimate
+        monthly_energy_bill = monthly_energy * avg_rate
+        
+        # Penalty calculation
+        pf_shortfall = PF_BENCHMARK - avg_pf  # e.g., 0.92 - 0.85 = 0.07
+        penalty_pct = pf_shortfall * 100  # 7%
+        pf_penalty = monthly_energy_bill * (penalty_pct / 100)
+        pf_savings = int(pf_penalty)
+        
+        if pf_savings > 100:
+            savings_breakdown.append(f"PF penalty avoided (₹{pf_savings:,}/mo) - improve from {avg_pf:.2f} to 0.92")
+            total_savings += pf_savings
     
     # ============= 3. ToD SHIFT OPTIMIZATION =============
-    tod_status = "⚪"
+    # Calculate savings if peak energy is shifted to off-peak
     if energy_peak > 0:
+        # Project to monthly
         monthly_peak = energy_peak * monthly_factor
+        
+        # Potential savings = Peak energy × (Peak rate - Offpeak rate)
         rate_diff = RATE_PEAK - RATE_OFFPEAK  # 8.37 - 5.18 = 3.19
         
         # Assume 50% of peak can realistically be shifted
@@ -3796,75 +3718,39 @@ def main():
         tod_savings = int(shiftable_energy * rate_diff)
         
         if tod_savings > 100:
-            tod_status = "💰"
-            peak_pct = (energy_peak / total_energy * 100) if total_energy > 0 else 0
-            savings_breakdown.append(f"{tod_status} ToD optimization (₹{tod_savings:,}/mo) - shift {shiftable_energy:.0f}kWh peak→off-peak")
+            savings_breakdown.append(f"ToD optimization (₹{tod_savings:,}/mo) - shift {shiftable_energy:.0f}kWh from peak")
             total_savings += tod_savings
-        else:
-            savings_breakdown.append(f"{tod_status} ToD: Low peak usage ({energy_peak:.0f}kWh)")
     elif total_energy > 0:
         # Estimate if no ToD data
+        monthly_energy = total_energy * monthly_factor
+        # Assume 20% is peak, 50% shiftable
         estimated_peak = monthly_energy * 0.2
         shiftable = estimated_peak * 0.5
         tod_savings = int(shiftable * (RATE_PEAK - RATE_OFFPEAK))
         if tod_savings > 100:
-            tod_status = "💰"
-            savings_breakdown.append(f"{tod_status} ToD optimization (₹{tod_savings:,}/mo est.)")
+            savings_breakdown.append(f"ToD optimization (₹{tod_savings:,}/mo est.)")
             total_savings += tod_savings
     
-    # ============= 4. MAXIMUM DEMAND MANAGEMENT =============
-    md_status = "⚪"
-    max_demand_recorded = kpis.get('max_demand_recorded', 0)
-    if max_demand_recorded > 0 and contracted_demand > 0:
-        md_utilization = (max_demand_recorded / contracted_demand) * 100
-        if md_utilization > 90:
-            md_status = "⚠️"
-            savings_breakdown.append(f"{md_status} Max Demand Alert: {max_demand_recorded:.0f}kW ({md_utilization:.0f}% of contract) - risk of overage")
-        elif md_utilization > 75:
-            savings_breakdown.append(f"{md_status} Max Demand: {max_demand_recorded:.0f}kW ({md_utilization:.0f}% of contract) - monitor")
-        else:
-            savings_breakdown.append(f"{md_status} Max Demand: {max_demand_recorded:.0f}kW ({md_utilization:.0f}% of contract) - safe margin")
-    
-    # ============= 5. LOAD FACTOR / IDLE TIME =============
-    idle_status = "⚪"
-    idle_time_pct = kpis.get('idle_time_pct', 0)
-    load_avg = kpis.get('load_avg', 0)
-    if idle_time_pct > 50:
-        idle_status = "📊"
-        # Estimate base load cost during idle
-        idle_cost = int(monthly_energy * (idle_time_pct / 100) * 0.1 * avg_rate)  # Assume 10% base load
-        savings_breakdown.append(f"{idle_status} Idle time: {idle_time_pct:.0f}% - base load awareness (₹{idle_cost:,}/mo)")
-    elif idle_time_pct > 30:
-        savings_breakdown.append(f"{idle_status} Idle time: {idle_time_pct:.0f}% - moderate")
-    else:
-        savings_breakdown.append(f"{idle_status} Utilization: Good ({100-idle_time_pct:.0f}% active)")
-    
-    # ============= 6. FIRE PREVENTION VALUE =============
+    # ============= 4. FIRE PREVENTION VALUE =============
     fire_high = kpis.get('fire_high', 0)
     fire_critical = kpis.get('fire_critical', 0)
-    if fire_critical > 0:
-        savings_breakdown.append("🔥 Fire risk: CRITICAL events detected - prevention value: Priceless")
-    elif fire_high > 0:
-        savings_breakdown.append("⚠️ Fire risk: High events detected - inspection recommended")
+    if fire_high > 0 or fire_critical > 0:
+        savings_breakdown.append("⚠️ Fire risk detected - prevention value: Priceless")
     else:
-        savings_breakdown.append("✅ Fire safety: Normal - monitoring active")
+        savings_breakdown.append("✅ Fire monitoring active")
     
-    # Build display - Apply 50% conservative discount for potential savings
-    # Rebates are actual money being saved, so no discount applied
+    # Build display - Apply 50% conservative discount for realistic expectations
     realizable_savings = int(total_savings * 0.5)
-    total_benefit = realizable_savings + rebate_earned
     
     # Calculate different time periods
     monthly_savings = realizable_savings
-    monthly_rebate = rebate_earned
-    monthly_total = total_benefit
-    period_total = int(monthly_total * data_days / 30) if data_days > 0 else 0
-    annual_total = monthly_total * 12
+    period_savings = int(monthly_savings * data_days / 30) if data_days > 0 else 0
+    annual_savings = monthly_savings * 12
     
-    if total_benefit == 0 and total_savings == 0:
+    if realizable_savings == 0:
         st.markdown("""
             <div class="savings-banner">
-                <div class="savings-label">💰 Savings & Benefits Analysis</div>
+                <div class="savings-label">💰 Savings Potential</div>
                 <div class="savings-value" style="font-size: 28px;">Analyzing...</div>
             </div>
         """, unsafe_allow_html=True)
@@ -3872,52 +3758,36 @@ def main():
         # Use Streamlit native components for reliable rendering
         st.markdown("""
             <div class="savings-banner">
-                <div class="savings-label">💰 Savings & Benefits Summary</div>
+                <div class="savings-label">💰 Savings Potential (Conservative Estimate)</div>
             </div>
         """, unsafe_allow_html=True)
         
-        # Main metrics using columns
+        # Savings metrics using columns
         s_col1, s_col2, s_col3 = st.columns(3)
         with s_col1:
             st.metric(
                 label=f"📅 This Period ({data_days} days)",
-                value=f"Rs.{period_total:,}"
+                value=f"₹{period_savings:,}"
             )
         with s_col2:
             st.metric(
-                label="📆 Monthly Total",
-                value=f"Rs.{monthly_total:,}",
-                delta=f"Rs.{monthly_rebate:,} rebate" if monthly_rebate > 0 else None,
-                delta_color="normal"
+                label="📆 Monthly",
+                value=f"₹{monthly_savings:,}"
             )
         with s_col3:
             st.metric(
                 label="📊 Annual Projection",
-                value=f"Rs.{annual_total:,}"
+                value=f"₹{annual_savings:,}"
             )
         
-        # Summary line
-        summary_parts = []
-        if monthly_savings > 0:
-            summary_parts.append(f"Potential Savings: ₹{monthly_savings:,}/mo")
-        if monthly_rebate > 0:
-            summary_parts.append(f"PF Rebate: ₹{monthly_rebate:,}/mo")
-        
-        if summary_parts:
-            st.markdown(f"""
-                <div style="text-align: center; font-size: 12px; color: #06d6a0; margin: 8px 0;">
-                    {" | ".join(summary_parts)}
-                </div>
-            """, unsafe_allow_html=True)
-        
-        # Breakdown section with better formatting
+        # Breakdown section
         savings_text = "<br>".join(savings_breakdown) if savings_breakdown else "Analyzing your data..."
         st.markdown(f"""
             <div style="background: rgba(6, 214, 160, 0.05); border-radius: 8px; padding: 12px; margin-top: 8px;">
-                <div style="font-size: 11px; font-weight: 600; margin-bottom: 8px; opacity: 0.9;">📋 Detailed Breakdown:</div>
+                <div style="font-size: 11px; font-weight: 600; margin-bottom: 8px; opacity: 0.9;">📋 Breakdown:</div>
                 <div style="text-align: left; font-size: 11px; line-height: 1.8;">{savings_text}</div>
                 <div style="font-size: 9px; opacity: 0.7; margin-top: 12px; border-top: 1px solid rgba(128,128,128,0.2); padding-top: 8px;">
-                    Based on {data_days} days of data | 50% realization factor on potential savings | PF rebates at actual rate | WBSEDCL HT Industrial Tariff
+                    Based on {data_days} days of data | 50% realization factor | WBSEDCL HT Industrial Tariff
                 </div>
             </div>
         """, unsafe_allow_html=True)
