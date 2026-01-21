@@ -1923,20 +1923,54 @@ def main():
     with tab1:
         try:
             if 'Date' in df.columns and 'Energy_kWh' in df.columns and 'kW_Total' in df.columns:
-                # Calculate daily consumption: last reading - first reading for each day
+                # Calculate daily consumption: group by Date AND Location to handle multiple meters
+                # Each meter has different cumulative readings, so we must calculate per-meter first
                 daily_stats = []
-                for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
-                    group_sorted = group.sort_values('Timestamp')
-                    if len(group_sorted) >= 2:
-                        first_energy = group_sorted['Energy_kWh'].iloc[0]
-                        last_energy = group_sorted['Energy_kWh'].iloc[-1]
-                        energy = max(0, last_energy - first_energy)
-                    else:
-                        energy = 0
-                    peak_kw = group_sorted['kW_Total'].max()
-                    daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
                 
-                daily = pd.DataFrame(daily_stats)
+                # Check if multiple locations exist
+                has_multiple_locations = 'Location' in df.columns and df['Location'].nunique() > 1
+                
+                if has_multiple_locations:
+                    # Group by both Date and Location, then sum across locations
+                    for (date, location), group in df.groupby([pd.to_datetime(df['Date']).dt.date, 'Location']):
+                        group_sorted = group.sort_values('Timestamp')
+                        if len(group_sorted) >= 2:
+                            first_energy = group_sorted['Energy_kWh'].iloc[0]
+                            last_energy = group_sorted['Energy_kWh'].iloc[-1]
+                            energy = last_energy - first_energy
+                            if energy < 0:  # Handle meter reset
+                                diffs = group_sorted['Energy_kWh'].diff()
+                                energy = diffs[diffs > 0].sum()
+                            energy = max(0, energy)
+                        else:
+                            energy = 0
+                        peak_kw = group_sorted['kW_Total'].max()
+                        daily_stats.append({'Date': date, 'Location': location, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
+                    
+                    # Sum energy across locations for each date
+                    daily_by_loc = pd.DataFrame(daily_stats)
+                    daily = daily_by_loc.groupby('Date').agg({
+                        'Energy_kWh': 'sum',
+                        'Peak_kW': 'max'
+                    }).reset_index()
+                else:
+                    # Single location - original logic
+                    for date, group in df.groupby(pd.to_datetime(df['Date']).dt.date):
+                        group_sorted = group.sort_values('Timestamp')
+                        if len(group_sorted) >= 2:
+                            first_energy = group_sorted['Energy_kWh'].iloc[0]
+                            last_energy = group_sorted['Energy_kWh'].iloc[-1]
+                            energy = last_energy - first_energy
+                            if energy < 0:  # Handle meter reset
+                                diffs = group_sorted['Energy_kWh'].diff()
+                                energy = diffs[diffs > 0].sum()
+                            energy = max(0, energy)
+                        else:
+                            energy = 0
+                        peak_kw = group_sorted['kW_Total'].max()
+                        daily_stats.append({'Date': date, 'Energy_kWh': energy, 'Peak_kW': peak_kw})
+                    
+                    daily = pd.DataFrame(daily_stats)
                 
                 if len(daily) == 0:
                     st.warning("No daily data available")
