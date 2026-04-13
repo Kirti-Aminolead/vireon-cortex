@@ -1,7 +1,7 @@
 services:
   gd-dashboard:
     build: .
-    container_name: gd-streamlit-app
+    container_name: vireon-cortex-app
     restart: unless-stopped
     ports:
       - "8505:8505"
